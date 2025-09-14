@@ -13,7 +13,7 @@ import os
 DB_CONFIG = {
     'host': os.getenv('COCKROACH_HOST', 'localhost'),
     'port': os.getenv('COCKROACH_PORT', '26257'),
-    'database': os.getenv('COCKROACH_DATABASE', 'sales_db'),
+    'database': os.getenv('COCKROACH_DATABASE', 'defaultdb'),
     'user': os.getenv('COCKROACH_USER', 'root'),
     'password': os.getenv('COCKROACH_PASSWORD', ''),
     'sslmode': os.getenv('COCKROACH_SSLMODE', 'require')
@@ -39,15 +39,21 @@ st.set_page_config(page_title="Sales Manager", layout="wide")
 def get_conn():
     """Create database connection with proper error handling"""
     try:
-        conn = psycopg2.connect(
-            host=DB_CONFIG['host'],
-            port=DB_CONFIG['port'],
-            database=DB_CONFIG['database'],
-            user=DB_CONFIG['user'],
-            password=DB_CONFIG['password'],
-            sslmode=DB_CONFIG['sslmode']
-        )
-        conn.autocommit = True  # Enable autocommit for CockroachDB
+        # Use single connection string if provided
+        database_url = os.getenv('DATABASE_URL')
+        if database_url:
+            conn = psycopg2.connect(database_url)
+        else:
+            # Use individual parameters (your current approach)
+            conn = psycopg2.connect(
+                host=DB_CONFIG['host'],
+                port=DB_CONFIG['port'],
+                database=DB_CONFIG['database'],
+                user=DB_CONFIG['user'],
+                password=DB_CONFIG['password'],
+                sslmode=DB_CONFIG['sslmode']
+            )
+        conn.autocommit = True
         return conn
     except psycopg2.Error as e:
         st.error(f"Database connection failed: {e}")
