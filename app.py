@@ -36,28 +36,34 @@ st.set_page_config(page_title="Sales Manager", layout="wide")
 # -----------------------------
 # DB HELPERS
 # -----------------------------
-def get_conn():
-    """Create database connection with proper error handling"""
-    try:
-        # Use single connection string if provided
-        database_url = os.getenv('DATABASE_URL')
-        if database_url:
-            conn = psycopg2.connect(database_url)
-        else:
-            # Use individual parameters (your current approach)
-            conn = psycopg2.connect(
-                host=DB_CONFIG['host'],
-                port=DB_CONFIG['port'],
-                database=DB_CONFIG['database'],
-                user=DB_CONFIG['user'],
-                password=DB_CONFIG['password'],
-                sslmode=DB_CONFIG['sslmode']
-            )
-        conn.autocommit = True
-        return conn
-    except psycopg2.Error as e:
-        st.error(f"Database connection failed: {e}")
-        st.stop()
+ def get_conn():
+       try:
+           # Get the path to the certificate file
+           cert_path = os.path.join(os.path.dirname(__file__), 'root.crt')
+           
+           database_url = os.getenv('DATABASE_URL')
+           if database_url:
+               # Add certificate path to connection string
+               if '?' in database_url:
+                   database_url += f'&sslrootcert={cert_path}'
+               else:
+                   database_url += f'?sslrootcert={cert_path}'
+               conn = psycopg2.connect(database_url)
+           else:
+               conn = psycopg2.connect(
+                   host=DB_CONFIG['host'],
+                   port=DB_CONFIG['port'],
+                   database=DB_CONFIG['database'],
+                   user=DB_CONFIG['user'],
+                   password=DB_CONFIG['password'],
+                   sslmode='verify-full',
+                   sslrootcert=cert_path
+               )
+           conn.autocommit = True
+           return conn
+       except psycopg2.Error as e:
+           st.error(f"Database connection failed: {e}")
+           st.stop()
 
 @st.cache_data(show_spinner=False)
 def init_db():
