@@ -65,6 +65,21 @@ def get_conn():
         st.error(f"Database connection failed: {e}")
         st.stop()
 
+def get_next_sequential_id(table_name: str, id_column: str = 'sequential_id') -> int:
+    """Get the next sequential ID for a table"""
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        # Get the maximum current sequential ID
+        c.execute(f"SELECT COALESCE(MAX({id_column}), 0) + 1 FROM {table_name}")
+        next_id = c.fetchone()[0]
+        return next_id
+    except Exception as e:
+        st.error(f"Error getting next sequential ID: {e}")
+        return 1
+    finally:
+        conn.close()
+
 @st.cache_data(show_spinner=False)
 def init_db():
     conn = get_conn()
@@ -91,11 +106,12 @@ def init_db():
             """
         )
         
-        # Create sales table
+        # Create sales table with sequential_id
         c.execute(
             """
             CREATE TABLE IF NOT EXISTS sales (
                 id SERIAL PRIMARY KEY,
+                sequential_id INTEGER UNIQUE NOT NULL,
                 date TEXT NOT NULL,
                 salesperson TEXT NOT NULL,
                 customer_id INTEGER NOT NULL,
@@ -155,11 +171,12 @@ def init_db():
             """
         )
 
-        # Create prepaid_sales table
+        # Create prepaid_sales table with sequential_id
         c.execute(
             """
             CREATE TABLE IF NOT EXISTS prepaid_sales (
                 id SERIAL PRIMARY KEY,
+                sequential_id INTEGER UNIQUE NOT NULL,
                 date TEXT NOT NULL,
                 customer_id INTEGER NOT NULL,
                 salesperson TEXT NOT NULL,
@@ -186,6 +203,31 @@ def init_db():
             )
             """
         )
+
+        # Check if sequential_id column exists, if not add it
+        try:
+            c.execute("ALTER TABLE sales ADD COLUMN sequential_id INTEGER")
+            c.execute("CREATE UNIQUE INDEX sales_sequential_id_idx ON sales(sequential_id)")
+            # Update existing records with sequential IDs
+            c.execute("SELECT id FROM sales ORDER BY id")
+            existing_sales = c.fetchall()
+            for i, (sale_id,) in enumerate(existing_sales, 1):
+                c.execute("UPDATE sales SET sequential_id = %s WHERE id = %s", (i, sale_id))
+        except psycopg2.Error:
+            # Column already exists or other error, continue
+            pass
+
+        try:
+            c.execute("ALTER TABLE prepaid_sales ADD COLUMN sequential_id INTEGER")
+            c.execute("CREATE UNIQUE INDEX prepaid_sales_sequential_id_idx ON prepaid_sales(sequential_id)")
+            # Update existing records with sequential IDs
+            c.execute("SELECT id FROM prepaid_sales ORDER BY id")
+            existing_prepaid_sales = c.fetchall()
+            for i, (sale_id,) in enumerate(existing_prepaid_sales, 1):
+                c.execute("UPDATE prepaid_sales SET sequential_id = %s WHERE id = %s", (i, sale_id))
+        except psycopg2.Error:
+            # Column already exists or other error, continue
+            pass
 
         # Insert default platforms
         for p in DEFAULT_PLATFORMS:
@@ -233,7 +275,7 @@ def get_sales() -> pd.DataFrame:
         # Regular sales
         regular_df = pd.read_sql_query(
             """
-            SELECT s.id, s.date, s.salesperson, c.name AS customer, s.quantity, s.amount,
+            SELECT s.id, s.sequential_id, s.date, s.salesperson, c.name AS customer, s.quantity, s.amount,
                    s.status, s.bank, s.remark, 'Regular' as sale_type
             FROM sales s
             JOIN customers c ON s.customer_id = c.id
@@ -244,7 +286,7 @@ def get_sales() -> pd.DataFrame:
         # Prepaid sales
         prepaid_df = pd.read_sql_query(
             """
-            SELECT ps.id, ps.date, ps.salesperson, c.name AS customer, ps.quantity, 
+            SELECT ps.id, ps.sequential_id, ps.date, ps.salesperson, c.name AS customer, ps.quantity, 
                    ps.total_amount as amount, 'Paid' as status, '' as bank, ps.remark, 'Prepaid' as sale_type
             FROM prepaid_sales ps
             JOIN customers c ON ps.customer_id = c.id
@@ -258,7 +300,7 @@ def get_sales() -> pd.DataFrame:
         else:
             combined_df = regular_df
         
-        return combined_df.sort_values(by=['date', 'id'], ascending=[False, False])
+        return combined_df.sort_values(by=['date', 'sequential_id'], ascending=[False, False])
     except Exception as e:
         st.error(f"Error fetching sales: {e}")
         return pd.DataFrame()
@@ -353,11 +395,11 @@ def get_prepaid_sales() -> pd.DataFrame:
     try:
         df = pd.read_sql_query(
             """
-            SELECT ps.id, ps.date, c.name AS customer, ps.salesperson, ps.total_amount,
+            SELECT ps.id, ps.sequential_id, ps.date, c.name AS customer, ps.salesperson, ps.total_amount,
                    ps.quantity, ps.remark
             FROM prepaid_sales ps
             JOIN customers c ON ps.customer_id = c.id
-            ORDER BY ps.date DESC, ps.id DESC
+            ORDER BY ps.date DESC, ps.sequential_id DESC
             """,
             conn,
         )
@@ -395,7 +437,7 @@ def get_all_activity() -> pd.DataFrame:
     try:
         # Regular sales
         regular_df = pd.read_sql_query("""
-            SELECT s.id, s.date, s.salesperson, c.name AS customer,
+            SELECT s.sequential_id as id, s.date, s.salesperson, c.name AS customer,
                    s.quantity, s.amount, s.status, s.bank, s.remark, 'Regular Sale' as type
             FROM sales s
             JOIN customers c ON s.customer_id = c.id
@@ -475,9 +517,12 @@ def insert_sale(date_str: str, salesperson: str, customer_id: int, total_quantit
     conn = get_conn()
     c = conn.cursor()
     try:
+        # Get next sequential ID
+        next_seq_id = get_next_sequential_id('sales', 'sequential_id')
+        
         c.execute(
-            "INSERT INTO sales(date, salesperson, customer_id, quantity, amount, status, bank, remark) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
-            (date_str, salesperson, customer_id, total_quantity, amount, status, bank, remark),
+            "INSERT INTO sales(sequential_id, date, salesperson, customer_id, quantity, amount, status, bank, remark) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            (next_seq_id, date_str, salesperson, customer_id, total_quantity, amount, status, bank, remark),
         )
         sale_id = c.fetchone()[0]
         
@@ -489,7 +534,7 @@ def insert_sale(date_str: str, salesperson: str, customer_id: int, total_quantit
         
         conn.commit()
         invalidate_all_caches()
-        return sale_id
+        return next_seq_id  # Return sequential ID instead of database ID
     except Exception as e:
         conn.rollback()
         st.error(f"Error inserting sale: {e}")
@@ -497,12 +542,19 @@ def insert_sale(date_str: str, salesperson: str, customer_id: int, total_quantit
     finally:
         conn.close()
 
-def update_sale(sale_id: int, date_str: str, salesperson: str, customer_id: int,
+def update_sale(sequential_id: int, date_str: str, salesperson: str, customer_id: int,
                  total_quantity: int, amount: float, status: str, bank: str, remark: str,
                  platform_map: List[Tuple[int, str, int]]):
     conn = get_conn()
     c = conn.cursor()
     try:
+        # Get database ID from sequential ID
+        c.execute("SELECT id FROM sales WHERE sequential_id=%s", (sequential_id,))
+        result = c.fetchone()
+        if not result:
+            raise ValueError(f"Sale with sequential ID {sequential_id} not found")
+        sale_id = result[0]
+        
         c.execute(
             "UPDATE sales SET date=%s, salesperson=%s, customer_id=%s, quantity=%s, amount=%s, status=%s, bank=%s, remark=%s WHERE id=%s",
             (date_str, salesperson, customer_id, total_quantity, amount, status, bank, remark, sale_id),
@@ -523,10 +575,17 @@ def update_sale(sale_id: int, date_str: str, salesperson: str, customer_id: int,
     finally:
         conn.close()
 
-def delete_sale(sale_id: int):
+def delete_sale(sequential_id: int):
     conn = get_conn()
     c = conn.cursor()
     try:
+        # Get database ID from sequential ID
+        c.execute("SELECT id FROM sales WHERE sequential_id=%s", (sequential_id,))
+        result = c.fetchone()
+        if not result:
+            raise ValueError(f"Sale with sequential ID {sequential_id} not found")
+        sale_id = result[0]
+        
         c.execute("DELETE FROM sale_platforms WHERE sale_id=%s", (sale_id,))
         c.execute("DELETE FROM sales WHERE id=%s", (sale_id,))
         conn.commit()
@@ -537,11 +596,11 @@ def delete_sale(sale_id: int):
     finally:
         conn.close()
 
-def mark_sale_paid(sale_id: int):
+def mark_sale_paid(sequential_id: int):
     conn = get_conn()
     c = conn.cursor()
     try:
-        c.execute("UPDATE sales SET status='Paid' WHERE id=%s", (sale_id,))
+        c.execute("UPDATE sales SET status='Paid' WHERE sequential_id=%s", (sequential_id,))
         conn.commit()
         invalidate_all_caches()
     except Exception as e:
@@ -618,10 +677,13 @@ def deduct_prepaid_funds(customer_id: int, amount: float, date_str: str, salespe
     try:
         ensure_prepaid_balance(customer_id)
         
+        # Get next sequential ID for prepaid sales
+        next_seq_id = get_next_sequential_id('prepaid_sales', 'sequential_id')
+        
         # Create prepaid sale record
         c.execute(
-            "INSERT INTO prepaid_sales(date, customer_id, salesperson, total_amount, quantity, remark) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
-            (date_str, customer_id, salesperson, amount, total_quantity, remark)
+            "INSERT INTO prepaid_sales(sequential_id, date, customer_id, salesperson, total_amount, quantity, remark) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            (next_seq_id, date_str, customer_id, salesperson, amount, total_quantity, remark)
         )
         prepaid_sale_id = c.fetchone()[0]
         
@@ -635,14 +697,14 @@ def deduct_prepaid_funds(customer_id: int, amount: float, date_str: str, salespe
         # Add transaction record
         c.execute(
             "INSERT INTO prepaid_transactions(date, customer_id, transaction_type, amount, description, salesperson, remark) VALUES (%s,%s,%s,%s,%s,%s,%s)",
-            (date_str, customer_id, "Debit", amount, f"Purchase - Sale #{prepaid_sale_id:02d}", salesperson, remark)
+            (date_str, customer_id, "Debit", amount, f"Purchase - Sale #P{next_seq_id:02d}", salesperson, remark)
         )
         
         # Update balance (allow negative balance)
         c.execute("UPDATE prepaid_balances SET balance = balance - %s WHERE customer_id = %s", (amount, customer_id))
         conn.commit()
         invalidate_all_caches()
-        return prepaid_sale_id
+        return next_seq_id  # Return sequential ID instead of database ID
     except Exception as e:
         conn.rollback()
         st.error(f"Error deducting prepaid funds: {e}")
@@ -852,12 +914,12 @@ if menu == "Add Sales":
             if errors:
                 st.error("\n".join(["❌ " + e for e in errors]))
             else:
-                sale_id = insert_sale(
+                sequential_id = insert_sale(
                     dt.strftime("%Y-%m-%d"), salesperson, final_cid, int(total_quantity),
                     float(amount), status, bank, remark, plats
                 )
-                if sale_id > 0:
-                    st.success(f"✅ Sale saved with ID #{sale_id:02d}")
+                if sequential_id > 0:
+                    st.success(f"✅ Sale saved with ID #{sequential_id:02d}")
                     time.sleep(2)
                     st.session_state.add_sales_key += 1
                     st.rerun()
@@ -891,9 +953,9 @@ elif menu == "View Sales":
         # Format ID display based on sale type
         def format_sale_id(row):
             if row['sale_type'] == 'Prepaid':
-                return f"#P{row['id']:02d}"
+                return f"#P{row['sequential_id']:02d}"
             else:
-                return f"#{row['id']:02d}"
+                return f"#{row['sequential_id']:02d}"
         
         sales_df['formatted_id'] = sales_df.apply(format_sale_id, axis=1)
 
@@ -936,16 +998,16 @@ elif menu == "Edit Sales":
             # Format the sale IDs for display
             formatted_options = []
             for idx, row in regular_sales.iterrows():
-                formatted_id = f"#{int(row['id']):02d}"
+                formatted_id = f"#{int(row['sequential_id']):02d}"
                 formatted_options.append(f"{formatted_id} - {row['customer']} - {row['date']}")
             
             sel_option = st.selectbox("Select Sale", formatted_options)
-            # Extract numeric ID from the selection
-            numeric_id = int(sel_option.split(" - ")[0].replace("#", ""))
+            # Extract sequential ID from the selection
+            sequential_id = int(sel_option.split(" - ")[0].replace("#", ""))
             
-            row = regular_sales[regular_sales["id"] == numeric_id].iloc[0]
+            row = regular_sales[regular_sales["sequential_id"] == sequential_id].iloc[0]
             sp_df = get_sale_platforms_df()
-            my_plats = sp_df[(sp_df["sale_id"] == numeric_id) & (sp_df["sale_type"] == "Regular")]
+            my_plats = sp_df[(sp_df["sale_id"] == row['id']) & (sp_df["sale_type"] == "Regular")]
 
             col1, col2 = st.columns(2)
             with col1:
@@ -994,7 +1056,7 @@ elif menu == "Edit Sales":
                     st.error("\n".join(["❌ " + e for e in errs]))
                 else:
                     platform_map = plats
-                    update_sale(numeric_id, dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), status, bank, remark, platform_map)
+                    update_sale(sequential_id, dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), status, bank, remark, platform_map)
                     st.success("✅ Sale updated.")
 
 # --- Delete Sales ---
@@ -1012,17 +1074,17 @@ elif menu == "Delete Sales":
             # Format the sale IDs for display
             formatted_options = []
             for idx, row in regular_sales.iterrows():
-                formatted_id = f"#{int(row['id']):02d}"
+                formatted_id = f"#{int(row['sequential_id']):02d}"
                 formatted_options.append(f"{formatted_id} - {row['customer']} - {row['date']}")
             
             sel_option = st.selectbox("Select Sale", formatted_options)
-            # Extract numeric ID from the selection
-            numeric_id = int(sel_option.split(" - ")[0].replace("#", ""))
+            # Extract sequential ID from the selection
+            sequential_id = int(sel_option.split(" - ")[0].replace("#", ""))
             
-            row = regular_sales[regular_sales["id"] == numeric_id].iloc[0]
-            st.warning(f"You are about to delete sale #{numeric_id:02d} for {row['customer']} on {row['date']} amount {row['amount']}")
+            row = regular_sales[regular_sales["sequential_id"] == sequential_id].iloc[0]
+            st.warning(f"You are about to delete sale #{sequential_id:02d} for {row['customer']} on {row['date']} amount {row['amount']}")
             if st.button("Confirm Delete", type="primary"):
-                delete_sale(numeric_id)
+                delete_sale(sequential_id)
                 st.success("✅ Deleted successfully.")
 
 # --- Pending Payment ---
@@ -1038,7 +1100,7 @@ elif menu == "Pending Payment":
 
         for _, row in pending_df.iterrows():
             record = row.to_dict()
-            record['formatted_id'] = f"#{int(row['id']):02d}"
+            record['formatted_id'] = f"#{int(row['sequential_id']):02d}"
             display_records.append(record)
 
         # Display header
@@ -1093,9 +1155,9 @@ elif menu == "Pending Payment":
             with col10:
                 st.write(row_data['sale_type'])
             with col11:
-                if st.button("Mark Paid", key=f"mark_paid_pending_{row_data['id']}", type="primary"):
-                    mark_sale_paid(row_data['id'])
-                    st.success(f"✅ Sale #{row_data['id']:02d} marked as Paid!")
+                if st.button("Mark Paid", key=f"mark_paid_pending_{row_data['sequential_id']}", type="primary"):
+                    mark_sale_paid(row_data['sequential_id'])
+                    st.success(f"✅ Sale #{row_data['sequential_id']:02d} marked as Paid!")
                     st.rerun()
 
         # Display total pending amount
@@ -1127,9 +1189,9 @@ elif menu == "Customer History":
             # Format ID display based on sale type
             def format_sale_id(row):
                 if row['sale_type'] == 'Prepaid':
-                    return f"#P{int(row['id']):02d}"
+                    return f"#P{int(row['sequential_id']):02d}"
                 else:
-                    return f"#{int(row['id']):02d}"
+                    return f"#{int(row['sequential_id']):02d}"
             
             customer_sales['formatted_id'] = customer_sales.apply(format_sale_id, axis=1)
             
@@ -1186,9 +1248,9 @@ elif menu == "Customer History":
                     st.write(row['sale_type'])
                 with col11:
                     if row["status"] == "Pending" and row["sale_type"] == "Regular":
-                        if st.button("Mark Paid", key=f"mark_paid_history_{row['id']}", type="primary"):
-                            mark_sale_paid(row['id'])
-                            st.success(f"✅ Sale #{row['id']:02d} marked as Paid!")
+                        if st.button("Mark Paid", key=f"mark_paid_history_{row['sequential_id']}", type="primary"):
+                            mark_sale_paid(row['sequential_id'])
+                            st.success(f"✅ Sale #{row['sequential_id']:02d} marked as Paid!")
                             st.rerun()
                     else:
                         if row["sale_type"] == "Prepaid":
@@ -1309,7 +1371,7 @@ elif menu == "Platform ID List":
         query = """
         SELECT 
             sp.id as platform_id,
-            sp.sale_id,
+            s.sequential_id as sale_sequential_id,
             sp.platform_account_id,
             sp.quantity,
             sp.is_archived,
@@ -1326,7 +1388,7 @@ elif menu == "Platform ID List":
         
         SELECT 
             psp.id as platform_id,
-            psp.prepaid_sale_id as sale_id,
+            ps.sequential_id as sale_sequential_id,
             psp.platform_account_id,
             psp.quantity,
             psp.is_archived,
@@ -1339,7 +1401,7 @@ elif menu == "Platform ID List":
         JOIN customers c ON ps.customer_id = c.id
         JOIN platforms p ON psp.platform_id = p.id
         
-        ORDER BY date DESC, sale_id DESC, platform_id DESC
+        ORDER BY date DESC, sale_sequential_id DESC, platform_id DESC
         """
         
         df = pd.read_sql_query(query, conn)
@@ -1348,7 +1410,7 @@ elif menu == "Platform ID List":
         query = """
         SELECT 
             sp.id as platform_id,
-            sp.sale_id,
+            s.sequential_id as sale_sequential_id,
             sp.platform_account_id,
             sp.quantity,
             sp.is_archived,
@@ -1360,7 +1422,7 @@ elif menu == "Platform ID List":
         JOIN sales s ON sp.sale_id = s.id
         JOIN customers c ON s.customer_id = c.id
         JOIN platforms p ON sp.platform_id = p.id
-        ORDER BY s.date DESC, sp.sale_id DESC, sp.id DESC
+        ORDER BY s.date DESC, s.sequential_id DESC, sp.id DESC
         """
         df = pd.read_sql_query(query, conn)
     
@@ -1444,12 +1506,12 @@ elif menu == "Platform ID List":
                     st.error(f"Error updating status: {str(e)}")
 
         with col2:
-            # Format sale ID
-            sale_id = int(row['sale_id'])
+            # Format sale ID using sequential ID
+            sale_sequential_id = int(row['sale_sequential_id'])
             if row['sale_type'] == 'Prepaid':
-                st.write(f"#P{sale_id:02d}")
+                st.write(f"#P{sale_sequential_id:02d}")
             else:
-                st.write(f"#{sale_id:02d}")
+                st.write(f"#{sale_sequential_id:02d}")
 
         with col3:
             st.write(row['date'])
@@ -1519,7 +1581,7 @@ elif menu == "Platform ID List":
         # Format for export
         export_df['Status'] = export_df['is_archived'].apply(lambda x: "Done" if x else "Pending")
         export_df['Sale_ID'] = export_df.apply(
-            lambda row: f"#P{row['sale_id']:02d}" if row['sale_type'] == 'Prepaid' else f"#{row['sale_id']:02d}",
+            lambda row: f"#P{row['sale_sequential_id']:02d}" if row['sale_type'] == 'Prepaid' else f"#{row['sale_sequential_id']:02d}",
             axis=1
         )
         
@@ -1664,13 +1726,13 @@ elif menu == "Prepaid Customer":
                 if errors:
                     st.error("\n".join(["❌ " + e for e in errors]))
                 else:
-                    prepaid_sale_id = deduct_prepaid_funds(
+                    prepaid_sequential_id = deduct_prepaid_funds(
                         final_cid, float(amount), dt.strftime("%Y-%m-%d"), 
                         salesperson, int(total_quantity), remark, plats
                     )
-                    if prepaid_sale_id > 0:
+                    if prepaid_sequential_id > 0:
                         remaining_balance = get_customer_balance(final_cid)
-                        st.success(f"✅ Sale processed! Sale ID: #P{prepaid_sale_id:02d}")
+                        st.success(f"✅ Sale processed! Sale ID: #P{prepaid_sequential_id:02d}")
                         balance_color = "green" if remaining_balance >= 0 else "red"
                         st.markdown(f"💰 **Remaining Balance:** <span style='color:{balance_color}'>₹{remaining_balance:.2f}</span>", unsafe_allow_html=True)
                         
@@ -1781,11 +1843,11 @@ elif menu == "Prepaid Customer":
         prepaid_sales_df = get_prepaid_sales()
         
         if not prepaid_platforms_df.empty and not prepaid_sales_df.empty:
-            # Merge platform data with sales data
+            # Merge platform data with sales data using sequential_id
             full_df = prepaid_platforms_df.merge(prepaid_sales_df, left_on="prepaid_sale_id", right_on="id", how="left")
             full_df = full_df.sort_values(by="date", ascending=False).reset_index(drop=True)
             full_df.rename(columns={'quantity_x': 'Quantity', 'id_x': 'prepaid_sale_platform_id'}, inplace=True)
-            full_df = full_df[['prepaid_sale_platform_id', 'prepaid_sale_id', 'date', 'customer', 
+            full_df = full_df[['prepaid_sale_platform_id', 'sequential_id', 'date', 'customer', 
                               'platform', 'platform_account_id', 'Quantity', 'is_archived']]
             
             platforms_df = get_platforms()
@@ -1838,7 +1900,7 @@ elif menu == "Prepaid Customer":
                             st.rerun()
                     
                     with col2:
-                        st.write(f"#P{row['prepaid_sale_id']:02d}")
+                        st.write(f"#P{row['sequential_id']:02d}")
                     with col3:
                         st.write(row['date'])
                     with col4:
