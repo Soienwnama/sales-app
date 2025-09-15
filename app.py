@@ -1405,34 +1405,73 @@ elif menu == "Report":
         grp = filtered_df.groupby("salesperson")["amount"].sum().reset_index().sort_values("amount", ascending=False)
         st.dataframe(grp, use_container_width=True)
 
-        st.markdown("### Sales by Platform")
+         st.markdown("### Sales by Platform")
         conn = get_conn()
         try:
-            # Only count regular sales (exclude prepaid deductions)
+            # Fixed query with proper NULL handling and UNION for both regular and prepaid sales
             platform_sales_df = pd.read_sql_query(
                 """
-                SELECT p.name AS platform, 
-                       COALESCE(SUM(sp.quantity), 0) AS total_quantity,
-                       COALESCE(SUM((s.amount * sp.quantity) / s.quantity), 0) AS total_amount
-                FROM platforms p
-                LEFT JOIN sale_platforms sp ON p.id = sp.platform_id
-                LEFT JOIN sales s ON sp.sale_id = s.id AND s.date BETWEEN %s AND %s
-                WHERE s.id IS NOT NULL
-                GROUP BY p.name
-                HAVING total_amount > 0
+                WITH regular_platform_sales AS (
+                    SELECT p.name AS platform, 
+                           COALESCE(SUM(sp.quantity), 0) AS total_quantity,
+                           COALESCE(SUM((s.amount * sp.quantity) / NULLIF(s.quantity, 0)), 0) AS total_amount
+                    FROM platforms p
+                    LEFT JOIN sale_platforms sp ON p.id = sp.platform_id
+                    LEFT JOIN sales s ON sp.sale_id = s.id 
+                    WHERE s.date BETWEEN %s AND %s OR s.id IS NULL
+                    GROUP BY p.name
+                ),
+                prepaid_platform_sales AS (
+                    SELECT p.name AS platform,
+                           COALESCE(SUM(psp.quantity), 0) AS total_quantity,
+                           COALESCE(SUM((ps.total_amount * psp.quantity) / NULLIF(ps.quantity, 0)), 0) AS total_amount
+                    FROM platforms p
+                    LEFT JOIN prepaid_sale_platforms psp ON p.id = psp.platform_id
+                    LEFT JOIN prepaid_sales ps ON psp.prepaid_sale_id = ps.id
+                    WHERE ps.date BETWEEN %s AND %s OR ps.id IS NULL
+                    GROUP BY p.name
+                )
+                SELECT rps.platform,
+                       (rps.total_quantity + COALESCE(pps.total_quantity, 0)) AS total_quantity,
+                       (rps.total_amount + COALESCE(pps.total_amount, 0)) AS total_amount
+                FROM regular_platform_sales rps
+                LEFT JOIN prepaid_platform_sales pps ON rps.platform = pps.platform
+                WHERE (rps.total_amount + COALESCE(pps.total_amount, 0)) > 0
                 ORDER BY total_amount DESC
                 """,
                 conn,
-                params=(start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+                params=(start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"), 
+                       start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
             )
-        except:
-            platform_sales_df = pd.DataFrame(columns=["platform", "total_quantity", "total_amount"])
+        except Exception as e:
+            st.warning(f"Could not load platform sales data: {e}")
+            # Fallback to simpler query for regular sales only
+            try:
+                platform_sales_df = pd.read_sql_query(
+                    """
+                    SELECT p.name AS platform, 
+                           COALESCE(SUM(sp.quantity), 0) AS total_quantity,
+                           COALESCE(COUNT(sp.id), 0) AS total_sales
+                    FROM platforms p
+                    LEFT JOIN sale_platforms sp ON p.id = sp.platform_id
+                    LEFT JOIN sales s ON sp.sale_id = s.id AND s.date BETWEEN %s AND %s
+                    WHERE s.id IS NOT NULL
+                    GROUP BY p.name
+                    HAVING COUNT(sp.id) > 0
+                    ORDER BY total_quantity DESC
+                    """,
+                    conn,
+                    params=(start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+                )
+            except:
+                platform_sales_df = pd.DataFrame(columns=["platform", "total_quantity"])
         finally:
             conn.close()
-        st.dataframe(platform_sales_df, use_container_width=True)
-
-    else:
-        st.info("No activity found for the selected date range.")
+        
+        if not platform_sales_df.empty:
+            st.dataframe(platform_sales_df, use_container_width=True)
+        else:
+            st.info("No platform sales data found for the selected date range.")
 
 
 # --- Platform ID List ---
@@ -1443,11 +1482,11 @@ elif menu == "Platform ID List":
     conn = get_conn()
     
     # Query to get all platform entries with their associated sale and customer info
-    try:
+     try:
         query = """
         SELECT 
             sp.id as platform_id,
-            s.sequential_id as sale_sequential_id,
+            COALESCE(s.sequential_id, s.id) as sale_sequential_id,
             sp.platform_account_id,
             sp.quantity,
             sp.is_archived,
@@ -1464,7 +1503,7 @@ elif menu == "Platform ID List":
         
         SELECT 
             psp.id as platform_id,
-            ps.sequential_id as sale_sequential_id,
+            COALESCE(ps.sequential_id, ps.id) as sale_sequential_id,
             psp.platform_account_id,
             psp.quantity,
             psp.is_archived,
@@ -1481,26 +1520,43 @@ elif menu == "Platform ID List":
         """
         
         df = pd.read_sql_query(query, conn)
-    except:
-        # Fallback if prepaid tables don't exist
-        query = """
-        SELECT 
-            sp.id as platform_id,
-            s.sequential_id as sale_sequential_id,
-            sp.platform_account_id,
-            sp.quantity,
-            sp.is_archived,
-            s.date,
-            c.name as customer,
-            p.name as platform,
-            'Regular' as sale_type
-        FROM sale_platforms sp
-        JOIN sales s ON sp.sale_id = s.id
-        JOIN customers c ON s.customer_id = c.id
-        JOIN platforms p ON sp.platform_id = p.id
-        ORDER BY s.date DESC, s.sequential_id DESC, sp.id DESC
-        """
-        df = pd.read_sql_query(query, conn)
+        
+        # Additional safety: ensure no NULL values in critical columns
+        if not df.empty:
+            df['sale_sequential_id'] = df['sale_sequential_id'].fillna(df['platform_id'])
+            df['quantity'] = df['quantity'].fillna(1)
+            df['is_archived'] = df['is_archived'].fillna(False)
+            
+    except Exception as e:
+        st.warning(f"Could not load prepaid data: {e}")
+        # Fallback to regular sales only
+        try:
+            query = """
+            SELECT 
+                sp.id as platform_id,
+                COALESCE(s.sequential_id, s.id) as sale_sequential_id,
+                sp.platform_account_id,
+                sp.quantity,
+                sp.is_archived,
+                s.date,
+                c.name as customer,
+                p.name as platform,
+                'Regular' as sale_type
+            FROM sale_platforms sp
+            JOIN sales s ON sp.sale_id = s.id
+            JOIN customers c ON s.customer_id = c.id
+            JOIN platforms p ON sp.platform_id = p.id
+            ORDER BY s.date DESC, s.id DESC, sp.id DESC
+            """
+            df = pd.read_sql_query(query, conn)
+            
+            if not df.empty:
+                df['sale_sequential_id'] = df['sale_sequential_id'].fillna(df['platform_id'])
+                df['quantity'] = df['quantity'].fillna(1)
+                df['is_archived'] = df['is_archived'].fillna(False)
+        except Exception as e2:
+            st.error(f"Could not load platform data: {e2}")
+            df = pd.DataFrame()
     
     conn.close()
 
@@ -1582,12 +1638,22 @@ elif menu == "Platform ID List":
                     st.error(f"Error updating status: {str(e)}")
 
         with col2:
-            # Format sale ID using sequential ID
-            sale_sequential_id = int(row['sale_sequential_id'])
-            if row['sale_type'] == 'Prepaid':
-                st.write(f"#P{sale_sequential_id:02d}")
-            else:
-                st.write(f"#{sale_sequential_id:02d}")
+            # FIXED: Safe formatting of sale ID using sequential ID with proper error handling
+            try:
+                sale_sequential_id = row['sale_sequential_id']
+                if pd.isna(sale_sequential_id) or sale_sequential_id is None:
+                    # Use platform_id as fallback
+                    sale_sequential_id = platform_id
+                
+                sale_sequential_id = int(float(sale_sequential_id))
+                
+                if row['sale_type'] == 'Prepaid':
+                    st.write(f"#P{sale_sequential_id:02d}")
+                else:
+                    st.write(f"#{sale_sequential_id:02d}")
+            except (ValueError, TypeError, KeyError):
+                # Fallback display
+                st.write(f"#ERR{platform_id}")
 
         with col3:
             st.write(row['date'])
@@ -1602,7 +1668,11 @@ elif menu == "Platform ID List":
             st.write(row['platform_account_id'])
 
         with col7:
-            st.write(int(row['quantity']))
+            try:
+                quantity = int(float(row['quantity'])) if not pd.isna(row['quantity']) else 1
+                st.write(quantity)
+            except (ValueError, TypeError):
+                st.write("1")
 
         with col8:
             if archived:
