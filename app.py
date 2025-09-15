@@ -1260,7 +1260,6 @@ else:
             st.success("✅ Sale updated.")
 
 # --- Delete Sales ---
-# --- Delete Sales ---
 elif menu == "Delete Sales":
     st.subheader("🗑️ Delete Sales")
     sales_df = get_sales()
