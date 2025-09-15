@@ -1405,7 +1405,7 @@ elif menu == "Report":
         grp = filtered_df.groupby("salesperson")["amount"].sum().reset_index().sort_values("amount", ascending=False)
         st.dataframe(grp, use_container_width=True)
 
-         st.markdown("### Sales by Platform")
+        st.markdown("### Sales by Platform")
         conn = get_conn()
         try:
             # Fixed query with proper NULL handling and UNION for both regular and prepaid sales
