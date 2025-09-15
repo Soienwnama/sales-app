@@ -1482,7 +1482,7 @@ elif menu == "Platform ID List":
     conn = get_conn()
     
     # Query to get all platform entries with their associated sale and customer info
-     try:
+    try:
         query = """
         SELECT 
             sp.id as platform_id,
