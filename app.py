@@ -740,17 +740,23 @@ def update_prepaid_sale(sequential_id: int, date_str: str, salesperson: str, cus
     conn = get_conn()
     c = conn.cursor()
     try:
-        # Get database ID from sequential ID
-        c.execute("SELECT id FROM prepaid_sales WHERE sequential_id=%s", (sequential_id,))
+        # Get database ID and original amount from sequential ID
+        c.execute("SELECT id, total_amount FROM prepaid_sales WHERE sequential_id=%s", (sequential_id,))
         result = c.fetchone()
         if not result:
             raise ValueError(f"Prepaid sale with sequential ID {sequential_id} not found")
-        prepaid_sale_id = result[0]
+        prepaid_sale_id, original_amount = result
         
+        # Calculate the difference in amount
+        amount_difference = float(amount) - float(original_amount)
+        
+        # Update prepaid sale record
         c.execute(
             "UPDATE prepaid_sales SET date=%s, salesperson=%s, customer_id=%s, quantity=%s, total_amount=%s, remark=%s WHERE id=%s",
             (date_str, salesperson, customer_id, total_quantity, amount, remark, prepaid_sale_id),
         )
+        
+        # Delete and recreate platform entries
         c.execute("DELETE FROM prepaid_sale_platforms WHERE prepaid_sale_id=%s", (prepaid_sale_id,))
         
         for platform_id, platform_account_id, quantity in platform_map:
@@ -759,11 +765,17 @@ def update_prepaid_sale(sequential_id: int, date_str: str, salesperson: str, cus
                 (prepaid_sale_id, platform_id, platform_account_id.strip(), quantity),
             )
         
-        # Update prepaid transaction and balance
+        # Update the associated transaction record
         c.execute(
-            "UPDATE prepaid_transactions SET amount=%s, salesperson=%s, remark=%s WHERE description LIKE %s AND customer_id=%s",
-            (amount, salesperson, remark, f"Purchase - Sale #P{sequential_id:02d}", customer_id)
+            "UPDATE prepaid_transactions SET date=%s, amount=%s, salesperson=%s, remark=%s WHERE description LIKE %s AND customer_id=%s",
+            (date_str, amount, salesperson, remark, f"Purchase - Sale #P{sequential_id:02d}", customer_id)
         )
+        
+        # Adjust the customer's balance based on the amount difference
+        if amount_difference != 0:
+            # If amount increased, deduct more from balance (negative adjustment)
+            # If amount decreased, add back to balance (positive adjustment)
+            c.execute("UPDATE prepaid_balances SET balance = balance - %s WHERE customer_id = %s", (amount_difference, customer_id))
         
         conn.commit()
         invalidate_all_caches()
