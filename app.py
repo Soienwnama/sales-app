@@ -734,6 +734,37 @@ def archive_prepaid_platform_id(prepaid_sale_platform_id: int, is_archived: bool
     finally:
         conn.close()
 
+def delete_prepaid_sale(sequential_id: int) -> bool:
+    """Delete a prepaid sale and its associated platform records"""
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        # Get database ID from sequential ID
+        c.execute("SELECT id FROM prepaid_sales WHERE sequential_id=%s", (sequential_id,))
+        result = c.fetchone()
+        if not result:
+            st.error(f"Prepaid sale with sequential ID {sequential_id} not found")
+            return False
+        
+        prepaid_sale_id = result[0]
+        
+        # Delete associated platform records first (due to foreign key constraint)
+        c.execute("DELETE FROM prepaid_sale_platforms WHERE prepaid_sale_id=%s", (prepaid_sale_id,))
+        
+        # Delete the prepaid sale record
+        c.execute("DELETE FROM prepaid_sales WHERE id=%s", (prepaid_sale_id,))
+        
+        conn.commit()
+        invalidate_all_caches()
+        return True
+        
+    except Exception as e:
+        conn.rollback()
+        st.error(f"Error deleting prepaid sale: {e}")
+        return False
+    finally:
+        conn.close()
+        
 # -----------------------------
 # UI SECTIONS
 # -----------------------------
@@ -1012,49 +1043,102 @@ elif menu == "Edit Sales":
     if sales_df.empty:
         st.info("No sales to edit.")
     else:
-        # Only show regular sales for editing (not prepaid)
-        regular_sales = sales_df[sales_df["sale_type"] == "Regular"]
-        if regular_sales.empty:
-            st.info("No regular sales to edit.")
-        else:
-            # FIXED: Safe formatting of sale IDs for display with proper null handling
-            formatted_options = []
-            for idx, row in regular_sales.iterrows():
-                try:
-                    seq_id = row['sequential_id']
-                    # Handle None, NaN, or invalid values
-                    if pd.isna(seq_id) or seq_id is None:
-                        seq_id = row['id'] if 'id' in row and not pd.isna(row['id']) else idx + 1
-                    
-                    seq_id = int(float(seq_id))
-                    formatted_id = f"#{seq_id:02d}"
-                except (ValueError, TypeError):
-                    # Fallback for any conversion errors
-                    formatted_id = f"#{int(row.get('id', idx + 1)):02d}"
-                
-                formatted_options.append(f"{formatted_id} - {row['customer']} - {row['date']}")
-            
-            sel_option = st.selectbox("Select Sale", formatted_options)
-            
-            # FIXED: Safe extraction of sequential ID from selection
+        # Show ALL sales (both regular and prepaid) for editing
+        all_sales = sales_df.copy()
+        
+        # FIXED: Safe formatting of sale IDs for display with proper null handling
+        formatted_options = []
+        for idx, row in all_sales.iterrows():
             try:
-                # Extract sequential ID from the selection
-                sequential_id_str = sel_option.split(" - ")[0].replace("#", "")
-                selected_sequential_id = int(sequential_id_str)
+                seq_id = row['sequential_id']
+                # Handle None, NaN, or invalid values
+                if pd.isna(seq_id) or seq_id is None:
+                    seq_id = row['id'] if 'id' in row and not pd.isna(row['id']) else idx + 1
                 
-                # Find the row with matching sequential_id, with fallback
-                matching_rows = regular_sales[regular_sales["sequential_id"] == selected_sequential_id]
-                if matching_rows.empty:
-                    # Fallback: try to match by formatted display
-                    selected_index = formatted_options.index(sel_option)
-                    row = regular_sales.iloc[selected_index]
+                seq_id = int(float(seq_id))
+                
+                if row['sale_type'] == 'Prepaid':
+                    formatted_id = f"#P{seq_id:02d}"
                 else:
-                    row = matching_rows.iloc[0]
+                    formatted_id = f"#{seq_id:02d}"
                     
-            except (ValueError, IndexError):
-                # Additional fallback
-                st.error("Error selecting sale. Please try again.")
-                st.stop()
+            except (ValueError, TypeError):
+                # Fallback for any conversion errors
+                if row['sale_type'] == 'Prepaid':
+                    formatted_id = f"#P{int(row.get('id', idx + 1)):02d}"
+                else:
+                    formatted_id = f"#{int(row.get('id', idx + 1)):02d}"
+            
+            formatted_options.append(f"{formatted_id} - {row['customer']} - {row['date']} ({row['sale_type']})")
+        
+        sel_option = st.selectbox("Select Sale", formatted_options)
+        
+        # FIXED: Safe extraction of sequential ID from selection
+        try:
+            # Extract sequential ID and sale type from the selection
+            parts = sel_option.split(" - ")
+            id_part = parts[0]
+            sale_type = parts[-1].replace("(", "").replace(")", "")
+            
+            if id_part.startswith("#P"):
+                sequential_id_str = id_part.replace("#P", "")
+                is_prepaid = True
+            else:
+                sequential_id_str = id_part.replace("#", "")
+                is_prepaid = False
+                
+            selected_sequential_id = int(sequential_id_str)
+            
+            # Find the row with matching sequential_id and sale_type
+            matching_rows = all_sales[
+                (all_sales["sequential_id"] == selected_sequential_id) & 
+                (all_sales["sale_type"] == sale_type)
+            ]
+            
+            if matching_rows.empty:
+                # Fallback: try to match by formatted display
+                selected_index = formatted_options.index(sel_option)
+                row = all_sales.iloc[selected_index]
+            else:
+                row = matching_rows.iloc[0]
+                
+        except (ValueError, IndexError):
+            # Additional fallback
+            st.error("Error selecting sale. Please try again.")
+            st.stop()
+        
+        # Show different edit forms based on sale type
+        if row['sale_type'] == 'Prepaid':
+            st.info("🔄 Editing Prepaid Sale")
+            
+            # Get prepaid sale platforms
+            prepaid_platforms_df = get_prepaid_sale_platforms_df()
+            my_plats = prepaid_platforms_df[prepaid_platforms_df["prepaid_sale_id"] == row['id']]
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                dt = st.date_input("Date", value=datetime.strptime(row["date"], "%Y-%m-%d").date())
+            with col2:
+                salesperson = st.selectbox("Salesperson", SALESPERSONS, index=SALESPERSONS.index(row["salesperson"]))
+
+            cid, cust_name = customer_selector("edit_prepaid", default_customer=row['customer'])
+            if cid == -1 and cust_name:
+                cid = ensure_customer(cust_name)
+            elif cid == -1:
+                customers_df = get_customers()
+                cid = int(customers_df.loc[customers_df["name"] == row['customer'], "id"].values[0])
+
+            plats = platform_inputs("edit_prepaid", default_data=my_plats)
+            
+            st.markdown("---")
+            amount = st.number_input("Amount", min_value=0.0, step=1.0, format="%0.2f", value=float(row["amount"]))
+            remark = st.text_area("Remark (optional)", value=row["remark"] or "")
+            
+            if st.button("Update Prepaid Sale", type="primary"):
+                st.warning("⚠️ Prepaid sale editing is complex as it affects customer balances. This feature needs additional implementation.")
+                st.info("For now, you can delete this prepaid sale and create a new one, or contact your administrator.")
+        else:
+            st.info("🔄 Editing Regular Sale")
             
             sp_df = get_sale_platforms_df()
             my_plats = sp_df[(sp_df["sale_id"] == row['id']) & (sp_df["sale_type"] == "Regular")]
@@ -1085,7 +1169,7 @@ elif menu == "Edit Sales":
 
             remark = st.text_area("Remark (optional)", value=row["remark"] or "")
             
-            if st.button("Update Sale", type="primary"):
+            if st.button("Update Regular Sale", type="primary"):
                 errs = []
                 if not dt: errs.append("Date required")
                 if not salesperson: errs.append("Salesperson required")
@@ -1109,7 +1193,7 @@ elif menu == "Edit Sales":
                     # Use the actual sequential_id from the row
                     actual_sequential_id = row['sequential_id'] if not pd.isna(row['sequential_id']) else row['id']
                     update_sale(int(actual_sequential_id), dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), status, bank, remark, platform_map)
-                    st.success("✅ Sale updated.")
+                    st.success("✅ Regular sale updated.")
 
 # --- Delete Sales ---
 elif menu == "Delete Sales":
@@ -1118,51 +1202,82 @@ elif menu == "Delete Sales":
     if sales_df.empty:
         st.info("No sales to delete.")
     else:
-        # Only show regular sales for deletion (not prepaid)
-        regular_sales = sales_df[sales_df["sale_type"] == "Regular"]
-        if regular_sales.empty:
-            st.info("No regular sales to delete.")
-        else:
-            # FIXED: Safe formatting of sale IDs for display
-            formatted_options = []
-            for idx, row in regular_sales.iterrows():
-                try:
-                    seq_id = row['sequential_id']
-                    if pd.isna(seq_id) or seq_id is None:
-                        seq_id = row['id'] if 'id' in row and not pd.isna(row['id']) else idx + 1
-                    
-                    seq_id = int(float(seq_id))
-                    formatted_id = f"#{seq_id:02d}"
-                except (ValueError, TypeError):
-                    formatted_id = f"#{int(row.get('id', idx + 1)):02d}"
-                
-                formatted_options.append(f"{formatted_id} - {row['customer']} - {row['date']}")
-            
-            sel_option = st.selectbox("Select Sale", formatted_options)
-            
-            # FIXED: Safe extraction and handling
+        # Show ALL sales (both regular and prepaid) for deletion
+        all_sales = sales_df.copy()
+        
+        # FIXED: Safe formatting of sale IDs for display
+        formatted_options = []
+        for idx, row in all_sales.iterrows():
             try:
-                sequential_id_str = sel_option.split(" - ")[0].replace("#", "")
-                selected_sequential_id = int(sequential_id_str)
+                seq_id = row['sequential_id']
+                if pd.isna(seq_id) or seq_id is None:
+                    seq_id = row['id'] if 'id' in row and not pd.isna(row['id']) else idx + 1
                 
-                matching_rows = regular_sales[regular_sales["sequential_id"] == selected_sequential_id]
-                if matching_rows.empty:
-                    selected_index = formatted_options.index(sel_option)
-                    row = regular_sales.iloc[selected_index]
-                    actual_sequential_id = row['sequential_id'] if not pd.isna(row['sequential_id']) else row['id']
+                seq_id = int(float(seq_id))
+                
+                if row['sale_type'] == 'Prepaid':
+                    formatted_id = f"#P{seq_id:02d}"
                 else:
-                    row = matching_rows.iloc[0]
-                    actual_sequential_id = selected_sequential_id
+                    formatted_id = f"#{seq_id:02d}"
                     
-            except (ValueError, IndexError):
-                st.error("Error selecting sale. Please try again.")
-                st.stop()
+            except (ValueError, TypeError):
+                if row['sale_type'] == 'Prepaid':
+                    formatted_id = f"#P{int(row.get('id', idx + 1)):02d}"
+                else:
+                    formatted_id = f"#{int(row.get('id', idx + 1)):02d}"
             
-            st.warning(f"You are about to delete sale #{int(actual_sequential_id):02d} for {row['customer']} on {row['date']} amount {row['amount']}")
-            if st.button("Confirm Delete", type="primary"):
+            formatted_options.append(f"{formatted_id} - {row['customer']} - {row['date']} ({row['sale_type']})")
+        
+        sel_option = st.selectbox("Select Sale", formatted_options)
+        
+        # FIXED: Safe extraction and handling
+        try:
+            parts = sel_option.split(" - ")
+            id_part = parts[0]
+            sale_type = parts[-1].replace("(", "").replace(")", "")
+            
+            if id_part.startswith("#P"):
+                sequential_id_str = id_part.replace("#P", "")
+                is_prepaid = True
+            else:
+                sequential_id_str = id_part.replace("#", "")
+                is_prepaid = False
+                
+            selected_sequential_id = int(sequential_id_str)
+            
+            matching_rows = all_sales[
+                (all_sales["sequential_id"] == selected_sequential_id) & 
+                (all_sales["sale_type"] == sale_type)
+            ]
+            
+            if matching_rows.empty:
+                selected_index = formatted_options.index(sel_option)
+                row = all_sales.iloc[selected_index]
+                actual_sequential_id = row['sequential_id'] if not pd.isna(row['sequential_id']) else row['id']
+            else:
+                row = matching_rows.iloc[0]
+                actual_sequential_id = selected_sequential_id
+                
+        except (ValueError, IndexError):
+            st.error("Error selecting sale. Please try again.")
+            st.stop()
+        
+        # Show warning based on sale type
+        if row['sale_type'] == 'Prepaid':
+            st.warning(f"🚨 You are about to delete PREPAID sale #P{int(actual_sequential_id):02d} for {row['customer']} on {row['date']} amount ₹{row['amount']:.2f}")
+            st.error("⚠️ WARNING: Deleting a prepaid sale will NOT restore the customer's prepaid balance. This action should be done carefully!")
+            
+            if st.button("Confirm Delete Prepaid Sale", type="primary"):
+                if delete_prepaid_sale(int(actual_sequential_id)):
+                    st.success("✅ Prepaid sale deleted successfully.")
+                else:
+                    st.error("❌ Failed to delete prepaid sale.")
+        else:
+            st.warning(f"You are about to delete regular sale #{int(actual_sequential_id):02d} for {row['customer']} on {row['date']} amount ₹{row['amount']:.2f}")
+            
+            if st.button("Confirm Delete Regular Sale", type="primary"):
                 delete_sale(int(actual_sequential_id))
-                st.success("✅ Deleted successfully.")
-
+                st.success("✅ Regular sale deleted successfully.")
 # --- Pending Payment ---
 elif menu == "Pending Payment":
     st.subheader("⏳ Pending Payments")
