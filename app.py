@@ -1307,7 +1307,7 @@ elif menu == "Delete Sales":
         except (ValueError, IndexError):
             st.error("Error selecting sale. Please try again.")
             st.stop()
-        
+            
         if row['sale_type'] == 'Prepaid':
             st.warning(f"You are about to delete prepaid sale #P{int(actual_sequential_id):02d} for {row['customer']} on {row['date']} amount ₹{row['amount']}. This will restore ₹{row['amount']} to the customer's balance.")
             if st.button("Confirm Delete Prepaid Sale", type="primary"):
