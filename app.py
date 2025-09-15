@@ -1191,73 +1191,73 @@ elif menu == "Edit Sales":
         st.markdown("---")
         
         # For prepaid sales, don't show bank/status fields
-if row['sale_type'] == 'Prepaid':
-    amount = st.number_input("Amount", min_value=0.0, step=1.0, format="%0.2f", value=float(row["amount"]))
-    remark = st.text_area("Remark (optional)", value=row["remark"] or "")
-    
-    if st.button("Update Prepaid Sale", type="primary"):
-        errs = []
-        if not dt: errs.append("Date required")
-        if not salesperson: errs.append("Salesperson required")
-        if not cid or cid == -1: errs.append("Customer required")
-        if not plats: errs.append("At least one platform required")
-        
-        total_quantity = sum(p[2] for p in plats)
-        if total_quantity < 1: errs.append("Total quantity must be at least 1")
+        if row['sale_type'] == 'Prepaid':
+            amount = st.number_input("Amount", min_value=0.0, step=1.0, format="%0.2f", value=float(row["amount"]))
+            remark = st.text_area("Remark (optional)", value=row["remark"] or "")
+            
+            if st.button("Update Prepaid Sale", type="primary"):
+                errs = []
+                if not dt: errs.append("Date required")
+                if not salesperson: errs.append("Salesperson required")
+                if not cid or cid == -1: errs.append("Customer required")
+                if not plats: errs.append("At least one platform required")
+                
+                total_quantity = sum(p[2] for p in plats)
+                if total_quantity < 1: errs.append("Total quantity must be at least 1")
 
-        for (_pid, acc, qty) in plats:
-            if not acc: errs.append("Platform ID for all selected platforms is required")
-            if qty is None or qty < 0: errs.append("Quantity must be 0 or more")
-        
-        if amount is None or amount <= 0: errs.append("Amount must be a positive value")
+                for (_pid, acc, qty) in plats:
+                    if not acc: errs.append("Platform ID for all selected platforms is required")
+                    if qty is None or qty < 0: errs.append("Quantity must be 0 or more")
+                
+                if amount is None or amount <= 0: errs.append("Amount must be a positive value")
 
-        if errs:
-            st.error("\n".join(["❌ " + e for e in errs]))
+                if errs:
+                    st.error("\n".join(["❌ " + e for e in errs]))
+                else:
+                    actual_sequential_id = row['sequential_id'] if not pd.isna(row['sequential_id']) else row['id']
+                    try:
+                        update_prepaid_sale(int(actual_sequential_id), dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), remark, plats)
+                        st.success("✅ Prepaid sale updated.")
+                        time.sleep(1)  # Give database time to update
+                        st.rerun()  # Force page refresh
+                    except Exception as e:
+                        st.error(f"Failed to update prepaid sale: {e}")
+
         else:
-            actual_sequential_id = row['sequential_id'] if not pd.isna(row['sequential_id']) else row['id']
-            try:
-                update_prepaid_sale(int(actual_sequential_id), dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), remark, plats)
-                st.success("✅ Prepaid sale updated.")
-                time.sleep(1)  # Give database time to update
-                st.rerun()  # Force page refresh
-            except Exception as e:
-                st.error(f"Failed to update prepaid sale: {e}")
+            # Regular sale editing (existing code)
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                amount = st.number_input("Amount", min_value=0.0, step=1.0, format="%0.2f", value=float(row["amount"]))
+            with c2:
+                bank = st.selectbox("Bank", BANKS, index=BANKS.index(row["bank"]))
+            with c3:
+                status = st.selectbox("Status", STATUS_OPTIONS, index=STATUS_OPTIONS.index(row["status"]))
 
-else:
-    # Regular sale editing (existing code)
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        amount = st.number_input("Amount", min_value=0.0, step=1.0, format="%0.2f", value=float(row["amount"]))
-    with c2:
-        bank = st.selectbox("Bank", BANKS, index=BANKS.index(row["bank"]))
-    with c3:
-        status = st.selectbox("Status", STATUS_OPTIONS, index=STATUS_OPTIONS.index(row["status"]))
+            remark = st.text_area("Remark (optional)", value=row["remark"] or "")
+            
+            if st.button("Update Sale", type="primary"):
+                errs = []
+                if not dt: errs.append("Date required")
+                if not salesperson: errs.append("Salesperson required")
+                if not cid or cid == -1: errs.append("Customer required")
+                if not plats: errs.append("At least one platform required")
+                
+                total_quantity = sum(p[2] for p in plats)
+                if total_quantity < 1: errs.append("Total quantity must be at least 1")
 
-    remark = st.text_area("Remark (optional)", value=row["remark"] or "")
-    
-    if st.button("Update Sale", type="primary"):
-        errs = []
-        if not dt: errs.append("Date required")
-        if not salesperson: errs.append("Salesperson required")
-        if not cid or cid == -1: errs.append("Customer required")
-        if not plats: errs.append("At least one platform required")
-        
-        total_quantity = sum(p[2] for p in plats)
-        if total_quantity < 1: errs.append("Total quantity must be at least 1")
+                for (_pid, acc, qty) in plats:
+                    if not acc: errs.append("Platform ID for all selected platforms is required")
+                    if qty is None or qty < 0: errs.append("Quantity must be 0 or more")
+                
+                if amount is None or amount <= 0: errs.append("Amount must be a positive value")
+                if not bank: errs.append("Bank required")
 
-        for (_pid, acc, qty) in plats:
-            if not acc: errs.append("Platform ID for all selected platforms is required")
-            if qty is None or qty < 0: errs.append("Quantity must be 0 or more")
-        
-        if amount is None or amount <= 0: errs.append("Amount must be a positive value")
-        if not bank: errs.append("Bank required")
-
-        if errs:
-            st.error("\n".join(["❌ " + e for e in errs]))
-        else:
-            actual_sequential_id = row['sequential_id'] if not pd.isna(row['sequential_id']) else row['id']
-            update_sale(int(actual_sequential_id), dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), status, bank, remark, plats)
-            st.success("✅ Sale updated.")
+                if errs:
+                    st.error("\n".join(["❌ " + e for e in errs]))
+                else:
+                    actual_sequential_id = row['sequential_id'] if not pd.isna(row['sequential_id']) else row['id']
+                    update_sale(int(actual_sequential_id), dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), status, bank, remark, plats)
+                    st.success("✅ Sale updated.")
 
 # --- Delete Sales ---
 elif menu == "Delete Sales":
