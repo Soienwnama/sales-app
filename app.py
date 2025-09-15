@@ -479,6 +479,7 @@ def invalidate_all_caches():
     get_prepaid_transactions.clear()
     get_prepaid_sales.clear()
     get_prepaid_sale_platforms_df.clear()
+    get_all_activity.clear()
 
 # CRUD helpers
 def ensure_customer(name: str) -> int:
@@ -636,6 +637,10 @@ def get_customer_balance(customer_id: int) -> float:
     conn = get_conn()
     c = conn.cursor()
     try:
+        # Ensure balance record exists
+        c.execute("INSERT INTO prepaid_balances(customer_id, balance) VALUES (%s, 0) ON CONFLICT (customer_id) DO NOTHING", (customer_id,))
+        
+        # Get current balance
         c.execute("SELECT balance FROM prepaid_balances WHERE customer_id=%s", (customer_id,))
         result = c.fetchone()
         return float(result[0]) if result else 0.0
@@ -740,12 +745,12 @@ def update_prepaid_sale(sequential_id: int, date_str: str, salesperson: str, cus
     conn = get_conn()
     c = conn.cursor()
     try:
-        # Get database ID and original amount from sequential ID
-        c.execute("SELECT id, total_amount FROM prepaid_sales WHERE sequential_id=%s", (sequential_id,))
+        # Get database ID and original details from sequential ID
+        c.execute("SELECT id, total_amount, customer_id FROM prepaid_sales WHERE sequential_id=%s", (sequential_id,))
         result = c.fetchone()
         if not result:
             raise ValueError(f"Prepaid sale with sequential ID {sequential_id} not found")
-        prepaid_sale_id, original_amount = result
+        prepaid_sale_id, original_amount, original_customer_id = result
         
         # Calculate the difference in amount
         amount_difference = float(amount) - float(original_amount)
@@ -765,23 +770,45 @@ def update_prepaid_sale(sequential_id: int, date_str: str, salesperson: str, cus
                 (prepaid_sale_id, platform_id, platform_account_id.strip(), quantity),
             )
         
-        # Update the associated transaction record
-        c.execute(
-            "UPDATE prepaid_transactions SET date=%s, amount=%s, salesperson=%s, remark=%s WHERE description LIKE %s AND customer_id=%s",
-            (date_str, amount, salesperson, remark, f"Purchase - Sale #P{sequential_id:02d}", customer_id)
-        )
-        
-        # Adjust the customer's balance based on the amount difference
-        if amount_difference != 0:
-            # If amount increased, deduct more from balance (negative adjustment)
-            # If amount decreased, add back to balance (positive adjustment)
-            c.execute("UPDATE prepaid_balances SET balance = balance - %s WHERE customer_id = %s", (amount_difference, customer_id))
+        # Handle customer change
+        if customer_id != original_customer_id:
+            # Restore balance to original customer
+            ensure_prepaid_balance(original_customer_id)
+            c.execute("UPDATE prepaid_balances SET balance = balance + %s WHERE customer_id = %s", (original_amount, original_customer_id))
+            
+            # Deduct from new customer
+            ensure_prepaid_balance(customer_id)
+            c.execute("UPDATE prepaid_balances SET balance = balance - %s WHERE customer_id = %s", (amount, customer_id))
+            
+            # Update transaction customer
+            c.execute(
+                "UPDATE prepaid_transactions SET customer_id=%s, date=%s, amount=%s, salesperson=%s, remark=%s WHERE description LIKE %s AND customer_id=%s",
+                (customer_id, date_str, amount, salesperson, remark, f"Purchase - Sale #P{sequential_id:02d}", original_customer_id)
+            )
+        else:
+            # Same customer, just adjust the difference
+            if amount_difference != 0:
+                ensure_prepaid_balance(customer_id)
+                c.execute("UPDATE prepaid_balances SET balance = balance - %s WHERE customer_id = %s", (amount_difference, customer_id))
+            
+            # Update the associated transaction record
+            c.execute(
+                "UPDATE prepaid_transactions SET date=%s, amount=%s, salesperson=%s, remark=%s WHERE description LIKE %s AND customer_id=%s",
+                (date_str, amount, salesperson, remark, f"Purchase - Sale #P{sequential_id:02d}", customer_id)
+            )
         
         conn.commit()
+        
+        # Force cache invalidation
         invalidate_all_caches()
+        
+        # Clear Streamlit's cache completely
+        st.cache_data.clear()
+        
     except Exception as e:
         conn.rollback()
         st.error(f"Error updating prepaid sale: {e}")
+        raise e
     finally:
         conn.close()
 
@@ -1164,67 +1191,73 @@ elif menu == "Edit Sales":
         st.markdown("---")
         
         # For prepaid sales, don't show bank/status fields
-        if row['sale_type'] == 'Prepaid':
-            amount = st.number_input("Amount", min_value=0.0, step=1.0, format="%0.2f", value=float(row["amount"]))
-            remark = st.text_area("Remark (optional)", value=row["remark"] or "")
-            
-            if st.button("Update Prepaid Sale", type="primary"):
-                errs = []
-                if not dt: errs.append("Date required")
-                if not salesperson: errs.append("Salesperson required")
-                if not cid or cid == -1: errs.append("Customer required")
-                if not plats: errs.append("At least one platform required")
-                
-                total_quantity = sum(p[2] for p in plats)
-                if total_quantity < 1: errs.append("Total quantity must be at least 1")
+if row['sale_type'] == 'Prepaid':
+    amount = st.number_input("Amount", min_value=0.0, step=1.0, format="%0.2f", value=float(row["amount"]))
+    remark = st.text_area("Remark (optional)", value=row["remark"] or "")
+    
+    if st.button("Update Prepaid Sale", type="primary"):
+        errs = []
+        if not dt: errs.append("Date required")
+        if not salesperson: errs.append("Salesperson required")
+        if not cid or cid == -1: errs.append("Customer required")
+        if not plats: errs.append("At least one platform required")
+        
+        total_quantity = sum(p[2] for p in plats)
+        if total_quantity < 1: errs.append("Total quantity must be at least 1")
 
-                for (_pid, acc, qty) in plats:
-                    if not acc: errs.append("Platform ID for all selected platforms is required")
-                    if qty is None or qty < 0: errs.append("Quantity must be 0 or more")
-                
-                if amount is None or amount <= 0: errs.append("Amount must be a positive value")
+        for (_pid, acc, qty) in plats:
+            if not acc: errs.append("Platform ID for all selected platforms is required")
+            if qty is None or qty < 0: errs.append("Quantity must be 0 or more")
+        
+        if amount is None or amount <= 0: errs.append("Amount must be a positive value")
 
-                if errs:
-                    st.error("\n".join(["❌ " + e for e in errs]))
-                else:
-                    actual_sequential_id = row['sequential_id'] if not pd.isna(row['sequential_id']) else row['id']
-                    update_prepaid_sale(int(actual_sequential_id), dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), remark, plats)
-                    st.success("✅ Prepaid sale updated.")
+        if errs:
+            st.error("\n".join(["❌ " + e for e in errs]))
         else:
-            # Regular sale editing (existing code)
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                amount = st.number_input("Amount", min_value=0.0, step=1.0, format="%0.2f", value=float(row["amount"]))
-            with c2:
-                bank = st.selectbox("Bank", BANKS, index=BANKS.index(row["bank"]))
-            with c3:
-                status = st.selectbox("Status", STATUS_OPTIONS, index=STATUS_OPTIONS.index(row["status"]))
+            actual_sequential_id = row['sequential_id'] if not pd.isna(row['sequential_id']) else row['id']
+            try:
+                update_prepaid_sale(int(actual_sequential_id), dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), remark, plats)
+                st.success("✅ Prepaid sale updated.")
+                time.sleep(1)  # Give database time to update
+                st.rerun()  # Force page refresh
+            except Exception as e:
+                st.error(f"Failed to update prepaid sale: {e}")
 
-            remark = st.text_area("Remark (optional)", value=row["remark"] or "")
-            
-            if st.button("Update Sale", type="primary"):
-                errs = []
-                if not dt: errs.append("Date required")
-                if not salesperson: errs.append("Salesperson required")
-                if not cid or cid == -1: errs.append("Customer required")
-                if not plats: errs.append("At least one platform required")
-                
-                total_quantity = sum(p[2] for p in plats)
-                if total_quantity < 1: errs.append("Total quantity must be at least 1")
+else:
+    # Regular sale editing (existing code)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        amount = st.number_input("Amount", min_value=0.0, step=1.0, format="%0.2f", value=float(row["amount"]))
+    with c2:
+        bank = st.selectbox("Bank", BANKS, index=BANKS.index(row["bank"]))
+    with c3:
+        status = st.selectbox("Status", STATUS_OPTIONS, index=STATUS_OPTIONS.index(row["status"]))
 
-                for (_pid, acc, qty) in plats:
-                    if not acc: errs.append("Platform ID for all selected platforms is required")
-                    if qty is None or qty < 0: errs.append("Quantity must be 0 or more")
-                
-                if amount is None or amount <= 0: errs.append("Amount must be a positive value")
-                if not bank: errs.append("Bank required")
+    remark = st.text_area("Remark (optional)", value=row["remark"] or "")
+    
+    if st.button("Update Sale", type="primary"):
+        errs = []
+        if not dt: errs.append("Date required")
+        if not salesperson: errs.append("Salesperson required")
+        if not cid or cid == -1: errs.append("Customer required")
+        if not plats: errs.append("At least one platform required")
+        
+        total_quantity = sum(p[2] for p in plats)
+        if total_quantity < 1: errs.append("Total quantity must be at least 1")
 
-                if errs:
-                    st.error("\n".join(["❌ " + e for e in errs]))
-                else:
-                    actual_sequential_id = row['sequential_id'] if not pd.isna(row['sequential_id']) else row['id']
-                    update_sale(int(actual_sequential_id), dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), status, bank, remark, plats)
-                    st.success("✅ Sale updated.")
+        for (_pid, acc, qty) in plats:
+            if not acc: errs.append("Platform ID for all selected platforms is required")
+            if qty is None or qty < 0: errs.append("Quantity must be 0 or more")
+        
+        if amount is None or amount <= 0: errs.append("Amount must be a positive value")
+        if not bank: errs.append("Bank required")
+
+        if errs:
+            st.error("\n".join(["❌ " + e for e in errs]))
+        else:
+            actual_sequential_id = row['sequential_id'] if not pd.isna(row['sequential_id']) else row['id']
+            update_sale(int(actual_sequential_id), dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), status, bank, remark, plats)
+            st.success("✅ Sale updated.")
 
 # --- Delete Sales ---
 elif menu == "Delete Sales":
