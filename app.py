@@ -2023,10 +2023,10 @@ elif menu == "Prepaid Customer":
                 if cid == -1 and not cust_name: errors.append("Customer name is required")
                 
                 final_cid = cid
-                if cid == -1 and cust_name:
-                    final_cid = ensure_customer(cust_name)
-                
-                if final_cid == -1:
+if cid == -1 and cust_name:
+    final_cid = ensure_customer(cust_name)
+
+if final_cid == -1:
     errors.append("Customer selection is required")
 if not plats:
     errors.append("At least one platform is required")
