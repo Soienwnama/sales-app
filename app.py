@@ -2184,104 +2184,104 @@ elif prepaid_submenu == "Transaction History":
     else:
         st.info("No customers found.")
             
-    # --- Prepaid Platform ID List ---
-    elif prepaid_submenu == "Prepaid Platform ID List":
-        st.subheader("🧾 Prepaid Platform ID Management")
+  # --- Prepaid Platform ID List ---
+elif prepaid_submenu == "Prepaid Platform ID List":
+    st.subheader("🧾 Prepaid Platform ID Management")
+    
+    # Get prepaid platform data
+    prepaid_platforms_df = get_prepaid_sale_platforms_df()
+    prepaid_sales_df = get_prepaid_sales()
+    
+    if not prepaid_platforms_df.empty and not prepaid_sales_df.empty:
+        # Merge platform data with sales data using sequential_id
+        full_df = prepaid_platforms_df.merge(prepaid_sales_df, left_on="prepaid_sale_id", right_on="id", how="left")
+        full_df = full_df.sort_values(by="date", ascending=False).reset_index(drop=True)
+        full_df.rename(columns={'quantity_x': 'Quantity', 'id_x': 'prepaid_sale_platform_id'}, inplace=True)
+        full_df = full_df[['prepaid_sale_platform_id', 'sequential_id', 'date', 'customer',
+                            'platform', 'platform_account_id', 'Quantity', 'is_archived']]
         
-        # Get prepaid platform data
-        prepaid_platforms_df = get_prepaid_sale_platforms_df()
-        prepaid_sales_df = get_prepaid_sales()
+        platforms_df = get_platforms()
+        platform_names = platforms_df["name"].tolist()
         
-        if not prepaid_platforms_df.empty and not prepaid_sales_df.empty:
-            # Merge platform data with sales data using sequential_id
-            full_df = prepaid_platforms_df.merge(prepaid_sales_df, left_on="prepaid_sale_id", right_on="id", how="left")
-            full_df = full_df.sort_values(by="date", ascending=False).reset_index(drop=True)
-            full_df.rename(columns={'quantity_x': 'Quantity', 'id_x': 'prepaid_sale_platform_id'}, inplace=True)
-            full_df = full_df[['prepaid_sale_platform_id', 'sequential_id', 'date', 'customer',
-                                'platform', 'platform_account_id', 'Quantity', 'is_archived']]
+        # Platform filter
+        selected_platform_name = st.selectbox("Filter by Platform", options=["All"] + platform_names, key="prepaid_platform_filter")
+        
+        filtered_df = full_df.copy()
+        if selected_platform_name != "All":
+            filtered_df = filtered_df[filtered_df["platform"] == selected_platform_name]
+        
+        if not filtered_df.empty:
+            st.write("Use checkboxes to mark items as archived/done:")
             
-            platforms_df = get_platforms()
-            platform_names = platforms_df["name"].tolist()
+            # Header row
+            col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([0.8, 1, 1.2, 1.5, 1.2, 1.8, 0.8, 1.2])
+            with col1:
+                st.write("**Archive**")
+            with col2:
+                st.write("**Sale ID**")
+            with col3:
+                st.write("**Date**")
+            with col4:
+                st.write("**Customer**")
+            with col5:
+                st.write("**Platform**")
+            with col6:
+                st.write("**Platform ID**")
+            with col7:
+                st.write("**Qty**")
+            with col8:
+                st.write("**Status**")
             
-            # Platform filter
-            selected_platform_name = st.selectbox("Filter by Platform", options=["All"] + platform_names, key="prepaid_platform_filter")
+            st.markdown("---")
             
-            filtered_df = full_df.copy()
-            if selected_platform_name != "All":
-                filtered_df = filtered_df[filtered_df["platform"] == selected_platform_name]
-            
-            if not filtered_df.empty:
-                st.write("Use checkboxes to mark items as archived/done:")
-                
-                # Header row
+            # Display rows
+            for _, row in filtered_df.iterrows():
+                prepaid_sale_platform_id = row['prepaid_sale_platform_id']
                 col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([0.8, 1, 1.2, 1.5, 1.2, 1.8, 0.8, 1.2])
+                
                 with col1:
-                    st.write("**Archive**")
+                    current_archived = bool(row['is_archived'])
+                    archived = st.checkbox("", value=current_archived, key=f"prepaid_archive_{prepaid_sale_platform_id}")
+                    
+                    if archived != current_archived:
+                        archive_prepaid_platform_id(prepaid_sale_platform_id, archived)
+                        status_text = "Done" if archived else "Pending"
+                        st.toast(f"✅ {row['platform_account_id']} → {status_text}")
+                        st.rerun()
+                
                 with col2:
-                    st.write("**Sale ID**")
+                    st.write(f"#P{row['sequential_id']:02d}")
                 with col3:
-                    st.write("**Date**")
+                    st.write(row['date'])
                 with col4:
-                    st.write("**Customer**")
+                    st.write(row['customer'])
                 with col5:
-                    st.write("**Platform**")
+                    st.write(row['platform'])
                 with col6:
-                    st.write("**Platform ID**")
+                    st.write(row['platform_account_id'])
                 with col7:
-                    st.write("**Qty**")
+                    st.write(int(row['Quantity']))
                 with col8:
-                    st.write("**Status**")
-                
-                st.markdown("---")
-                
-                # Display rows
-                for _, row in filtered_df.iterrows():
-                    prepaid_sale_platform_id = row['prepaid_sale_platform_id']
-                    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([0.8, 1, 1.2, 1.5, 1.2, 1.8, 0.8, 1.2])
-                    
-                    with col1:
-                        current_archived = bool(row['is_archived'])
-                        archived = st.checkbox("", value=current_archived, key=f"prepaid_archive_{prepaid_sale_platform_id}")
-                        
-                        if archived != current_archived:
-                            archive_prepaid_platform_id(prepaid_sale_platform_id, archived)
-                            status_text = "Done" if archived else "Pending"
-                            st.toast(f"✅ {row['platform_account_id']} → {status_text}")
-                            st.rerun()
-                    
-                    with col2:
-                        st.write(f"#P{row['sequential_id']:02d}")
-                    with col3:
-                        st.write(row['date'])
-                    with col4:
-                        st.write(row['customer'])
-                    with col5:
-                        st.write(row['platform'])
-                    with col6:
-                        st.write(row['platform_account_id'])
-                    with col7:
-                        st.write(int(row['Quantity']))
-                    with col8:
-                        if archived:
-                            st.success("✅ Done")
-                        else:
-                            st.write("⏳ Pending")
-                
-                # Summary statistics
-                st.subheader("📊 Prepaid Platform Summary")
-                col1, col2, col3 = st.columns(3)
-                
-                total_items = len(filtered_df)
-                archived_items = len(filtered_df[filtered_df['is_archived'] == True])
-                pending_items = total_items - archived_items
-                
-                with col1:
-                    st.metric("Total Items", total_items)
-                with col2:
-                    st.metric("Archived Items", archived_items)
-                with col3:
-                    st.metric("Pending Items", pending_items)
-            else:
-                st.info("No prepaid platform data found for the selected filter.")
+                    if archived:
+                        st.success("✅ Done")
+                    else:
+                        st.write("⏳ Pending")
+            
+            # Summary statistics
+            st.subheader("📊 Prepaid Platform Summary")
+            col1, col2, col3 = st.columns(3)
+            
+            total_items = len(filtered_df)
+            archived_items = len(filtered_df[filtered_df['is_archived'] == True])
+            pending_items = total_items - archived_items
+            
+            with col1:
+                st.metric("Total Items", total_items)
+            with col2:
+                st.metric("Archived Items", archived_items)
+            with col3:
+                st.metric("Pending Items", pending_items)
         else:
-            st.info("No prepaid sales data found.")
+            st.info("No prepaid platform data found for the selected filter.")
+    else:
+        st.info("No prepaid sales data found.")
