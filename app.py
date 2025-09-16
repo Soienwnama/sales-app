@@ -752,18 +752,21 @@ def update_prepaid_sale(sequential_id: int, date_str: str, salesperson: str, cus
             raise ValueError(f"Prepaid sale with sequential ID {sequential_id} not found")
         prepaid_sale_id, old_customer_id, old_amount = result
         
+        # Ensure both customers have prepaid balance records
+        ensure_prepaid_balance(old_customer_id)
+        ensure_prepaid_balance(customer_id)
+        
         # Calculate balance adjustment if customer or amount changed
         if old_customer_id != customer_id or float(old_amount) != float(amount):
             # Reverse old transaction (add back to old customer)
             c.execute("UPDATE prepaid_balances SET balance = balance + %s WHERE customer_id = %s", (float(old_amount), old_customer_id))
             
             # Apply new transaction (deduct from new customer)
-            ensure_prepaid_balance(customer_id)
             c.execute("UPDATE prepaid_balances SET balance = balance - %s WHERE customer_id = %s", (float(amount), customer_id))
             
             # Update transaction record
             c.execute(
-                "UPDATE prepaid_transactions SET customer_id=%s, amount=%s, date=%s, salesperson=%s, remark=%s WHERE description LIKE %s",
+                "UPDATE prepaid_transactions SET customer_id=%s, amount=%s, date=%s, salesperson=%s, remark=%s WHERE description = %s",
                 (customer_id, amount, date_str, salesperson, remark, f"Purchase - Sale #P{sequential_id:02d}")
             )
         
@@ -782,7 +785,13 @@ def update_prepaid_sale(sequential_id: int, date_str: str, salesperson: str, cus
             )
         
         conn.commit()
+        # Clear all caches to ensure fresh data
         invalidate_all_caches()
+        # Also clear Streamlit's cache specifically for prepaid data
+        get_prepaid_balances.clear()
+        get_prepaid_transactions.clear()
+        get_prepaid_sales.clear()
+        
     except Exception as e:
         conn.rollback()
         st.error(f"Error updating prepaid sale: {e}")
@@ -801,16 +810,25 @@ def delete_prepaid_sale(sequential_id: int):
             raise ValueError(f"Prepaid sale with sequential ID {sequential_id} not found")
         prepaid_sale_id, customer_id, amount = result
         
+        # Ensure customer has prepaid balance record
+        ensure_prepaid_balance(customer_id)
+        
         # Reverse the balance deduction (add back to customer)
         c.execute("UPDATE prepaid_balances SET balance = balance + %s WHERE customer_id = %s", (float(amount), customer_id))
         
         # Delete related records
         c.execute("DELETE FROM prepaid_sale_platforms WHERE prepaid_sale_id=%s", (prepaid_sale_id,))
-        c.execute("DELETE FROM prepaid_transactions WHERE description LIKE %s", (f"Purchase - Sale #P{sequential_id:02d}",))
+        c.execute("DELETE FROM prepaid_transactions WHERE description = %s", (f"Purchase - Sale #P{sequential_id:02d}",))
         c.execute("DELETE FROM prepaid_sales WHERE id=%s", (prepaid_sale_id,))
         
         conn.commit()
+        # Clear all caches to ensure fresh data
         invalidate_all_caches()
+        # Also clear Streamlit's cache specifically for prepaid data
+        get_prepaid_balances.clear()
+        get_prepaid_transactions.clear()
+        get_prepaid_sales.clear()
+        
     except Exception as e:
         conn.rollback()
         st.error(f"Error deleting prepaid sale: {e}")
@@ -1199,6 +1217,8 @@ elif menu == "Edit Sales":
                     actual_sequential_id = row['sequential_id'] if not pd.isna(row['sequential_id']) else row['id']
                     update_prepaid_sale(int(actual_sequential_id), dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), remark, plats)
                     st.success("✅ Prepaid sale updated.")
+                    time.sleep(1)
+                    st.rerun()
         else:
             # For regular sales, show full form
             c1, c2, c3 = st.columns(3)
@@ -1235,7 +1255,9 @@ elif menu == "Edit Sales":
                     actual_sequential_id = row['sequential_id'] if not pd.isna(row['sequential_id']) else row['id']
                     update_sale(int(actual_sequential_id), dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), status, bank, remark, platform_map)
                     st.success("✅ Sale updated.")
-
+                    time.sleep(1)
+                    st.rerun()
+                    
 # --- Delete Sales ---
 elif menu == "Delete Sales":
     st.subheader("🗑️ Delete Sales")
@@ -2033,37 +2055,45 @@ elif menu == "Prepaid Customer":
     
     # --- View Balances ---
     elif prepaid_submenu == "View Balances":
-        st.subheader("💰 Prepaid Customer Balances")
+    st.subheader("💰 Prepaid Customer Balances")
+    
+    # Add refresh button to force cache clear
+    if st.button("🔄 Refresh Balances"):
+        get_prepaid_balances.clear()
+        st.rerun()
+    
+    balances_df = get_prepaid_balances()
+    if not balances_df.empty:
+        # Format balance column with colors
+        def format_balance(balance):
+            if balance >= 0:
+                return f"<span style='color:green'>₹{balance:.2f}</span>"
+            else:
+                return f"<span style='color:red'>₹{balance:.2f}</span>"
         
-        balances_df = get_prepaid_balances()
-        if not balances_df.empty:
-            # Format balance column with colors
-            def format_balance(balance):
-                if balance >= 0:
-                    return f"<span style='color:green'>₹{balance:.2f}</span>"
-                else:
-                    return f"<span style='color:red'>₹{balance:.2f}</span>"
-            
-            balances_df['formatted_balance'] = balances_df['balance'].apply(format_balance)
-            display_df = balances_df[['customer', 'formatted_balance']].copy()
-            display_df.columns = ['Customer', 'Balance']
-            
-            st.markdown(display_df.to_html(escape=False, index=False), unsafe_allow_html=True)
-            
-            # Summary
-            total_balance = balances_df['balance'].sum()
-            positive_balance = balances_df[balances_df['balance'] >= 0]['balance'].sum()
-            negative_balance = balances_df[balances_df['balance'] < 0]['balance'].sum()
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("💎 Total Balance", f"₹{total_balance:.2f}")
-            with col2:
-                st.metric("💚 Positive Balance", f"₹{positive_balance:.2f}")
-            with col3:
-                st.metric("❤️ Negative Balance", f"₹{negative_balance:.2f}")
-        else:
-            st.info("No prepaid customers found.")
+        balances_df['formatted_balance'] = balances_df['balance'].apply(format_balance)
+        display_df = balances_df[['customer', 'formatted_balance']].copy()
+        display_df.columns = ['Customer', 'Balance']
+        
+        st.markdown(display_df.to_html(escape=False, index=False), unsafe_allow_html=True)
+        
+        # Summary
+        total_balance = balances_df['balance'].sum()
+        positive_balance = balances_df[balances_df['balance'] >= 0]['balance'].sum()
+        negative_balance = balances_df[balances_df['balance'] < 0]['balance'].sum()
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("💎 Total Balance", f"₹{total_balance:.2f}")
+        with col2:
+            st.metric("💚 Positive Balance", f"₹{positive_balance:.2f}")
+        with col3:
+            st.metric("❤️ Negative Balance", f"₹{negative_balance:.2f}")
+    else:
+        st.info("No prepaid customers found.")
+        
+    # Show last updated time
+    st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
     
     # --- Transaction History ---
     elif prepaid_submenu == "Transaction History":
