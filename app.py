@@ -2062,16 +2062,33 @@ elif menu == "Prepaid Customer":
                         st.rerun()
 
     # --- View Balances ---
-    elif prepaid_submenu == "View Balances":
-        st.subheader("💰 Prepaid Customer Balances")
+elif prepaid_submenu == "View Balances":
+    st.subheader("💰 Prepaid Customer Balances")
 
-        # Add refresh button to force cache clear
-        if st.button("🔄 Refresh Balances"):
-            get_prepaid_balances.clear()
-            st.rerun()
+    # Add refresh button to force cache clear
+    if st.button("🔄 Refresh Balances"):
+        get_prepaid_balances.clear()
+        st.rerun()
 
-        balances_df = get_prepaid_balances()
-        if not balances_df.empty:
+    balances_df = get_prepaid_balances()
+    
+    # Filter to only show customers with non-zero balances OR customers who have had prepaid transactions
+    if not balances_df.empty:
+        # Get list of customers who have had prepaid transactions
+        transactions_df = get_prepaid_transactions()
+        customers_with_transactions = set()
+        if not transactions_df.empty:
+            customers_with_transactions = set(transactions_df['customer'].unique())
+        
+        # Filter balances to show only:
+        # 1. Customers with non-zero balances, OR
+        # 2. Customers who have had prepaid transactions (even if balance is now zero)
+        prepaid_customers_df = balances_df[
+            (balances_df['balance'] != 0) | 
+            (balances_df['customer'].isin(customers_with_transactions))
+        ]
+        
+        if not prepaid_customers_df.empty:
             # Format balance column with colors
             def format_balance(balance):
                 if balance >= 0:
@@ -2079,16 +2096,16 @@ elif menu == "Prepaid Customer":
                 else:
                     return f"<span style='color:red'>₹{balance:.2f}</span>"
 
-            balances_df['formatted_balance'] = balances_df['balance'].apply(format_balance)
-            display_df = balances_df[['customer', 'formatted_balance']].copy()
+            prepaid_customers_df['formatted_balance'] = prepaid_customers_df['balance'].apply(format_balance)
+            display_df = prepaid_customers_df[['customer', 'formatted_balance']].copy()
             display_df.columns = ['Customer', 'Balance']
 
             st.markdown(display_df.to_html(escape=False, index=False), unsafe_allow_html=True)
             
             # Summary
-            total_balance = balances_df['balance'].sum()
-            positive_balance = balances_df[balances_df['balance'] >= 0]['balance'].sum()
-            negative_balance = balances_df[balances_df['balance'] < 0]['balance'].sum()
+            total_balance = prepaid_customers_df['balance'].sum()
+            positive_balance = prepaid_customers_df[prepaid_customers_df['balance'] >= 0]['balance'].sum()
+            negative_balance = prepaid_customers_df[prepaid_customers_df['balance'] < 0]['balance'].sum()
             
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -2097,11 +2114,16 @@ elif menu == "Prepaid Customer":
                 st.metric("💚 Positive Balance", f"₹{positive_balance:.2f}")
             with col3:
                 st.metric("❤️ Negative Balance", f"₹{negative_balance:.2f}")
+                
+            # Show count of prepaid customers
+            st.info(f"Showing {len(prepaid_customers_df)} customers with prepaid activity")
         else:
-            st.info("No prepaid customers found.")
-            
-        # Show last updated time
-        st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
+            st.info("No customers with prepaid activity found.")
+    else:
+        st.info("No prepaid customers found.")
+        
+    # Show last updated time
+    st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
         
     # --- Transaction History ---
     elif prepaid_submenu == "Transaction History":
