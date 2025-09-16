@@ -1980,83 +1980,86 @@ elif menu == "Prepaid Customer":
                     st.session_state.add_funds_key += 1
                     st.rerun()
     
-    # --- Deduct Funds ---
-    elif prepaid_submenu == "Deduct Funds":
-        st.subheader("🛒 Deduct Funds (Sale)")
+  # --- Deduct Funds ---
+elif prepaid_submenu == "Deduct Funds":
+    st.subheader("🛒 Deduct Funds (Sale)")
+    
+    if 'deduct_funds_key' not in st.session_state:
+        st.session_state.deduct_funds_key = 0
+    
+    container_key = f'deduct_funds_container_{st.session_state.deduct_funds_key}'
+    with st.container(key=container_key):
+        col1, col2 = st.columns(2)
+        with col1:
+            dt = st.date_input("Date", value=date.today(), key=f'deduct_funds_date_{st.session_state.deduct_funds_key}')
+        with col2:
+            salesperson = st.selectbox("Salesperson", SALESPERSONS, key=f'deduct_funds_salesperson_{st.session_state.deduct_funds_key}')
         
-        if 'deduct_funds_key' not in st.session_state:
-            st.session_state.deduct_funds_key = 0
+        cid, cust_name = customer_selector(f"deduct_funds_{st.session_state.deduct_funds_key}")
         
-        container_key = f'deduct_funds_container_{st.session_state.deduct_funds_key}'
-        with st.container(key=container_key):
-            col1, col2 = st.columns(2)
-            with col1:
-                dt = st.date_input("Date", value=date.today(), key=f'deduct_funds_date_{st.session_state.deduct_funds_key}')
-            with col2:
-                salesperson = st.selectbox("Salesperson", SALESPERSONS, key=f'deduct_funds_salesperson_{st.session_state.deduct_funds_key}')
-            
-            cid, cust_name = customer_selector(f"deduct_funds_{st.session_state.deduct_funds_key}")
-            
-            # Show current balance
-            if cid != -1:
-                current_balance = get_customer_balance(cid)
+        # Show current balance
+        if cid != -1:
+            current_balance = get_customer_balance(cid)
+            balance_color = "green" if current_balance >= 0 else "red"
+            st.markdown(f"💰 **Current Balance:** <span style='color:{balance_color}'>₹{current_balance:.2f}</span>", unsafe_allow_html=True)
+        elif cust_name:
+            try:
+                temp_cid = ensure_customer(cust_name)
+                current_balance = get_customer_balance(temp_cid)
                 balance_color = "green" if current_balance >= 0 else "red"
                 st.markdown(f"💰 **Current Balance:** <span style='color:{balance_color}'>₹{current_balance:.2f}</span>", unsafe_allow_html=True)
-            elif cust_name:
-                try:
-                    temp_cid = ensure_customer(cust_name)
-                    current_balance = get_customer_balance(temp_cid)
-                    balance_color = "green" if current_balance >= 0 else "red"
-                    st.markdown(f"💰 **Current Balance:** <span style='color:{balance_color}'>₹{current_balance:.2f}</span>", unsafe_allow_html=True)
-                except:
-                    st.info("💰 New customer - Balance: ₹0.00")
-            
-            plats = platform_inputs(f"deduct_funds_{st.session_state.deduct_funds_key}")
-            
-            amount = st.number_input("Amount to Deduct", min_value=0.0, step=1.0, format="%0.2f", key=f'deduct_funds_amount_{st.session_state.deduct_funds_key}')
-            remark = st.text_area("Remark (optional)", key=f'deduct_funds_remark_{st.session_state.deduct_funds_key}')
-            
-            if st.button("Process Sale", type="primary"):
-                errors = []
-                if not dt: errors.append("Date is required")
-                if not salesperson: errors.append("Salesperson is required")
-                if cid == -1 and not cust_name: errors.append("Customer name is required")
-                
-                final_cid = cid
-if cid == -1 and cust_name:
-    final_cid = ensure_customer(cust_name)
-
-if final_cid == -1:
-    errors.append("Customer selection is required")
-if not plats:
-    errors.append("At least one platform is required")
-else:
-    for (_p_id, acc, _qty) in plats:
-        if not acc:
-            errors.append("Platform ID required for all selected platforms")
-
-total_quantity = sum(p[2] for p in plats)
-if total_quantity < 1:
-    errors.append("Total quantity must be at least 1")
-if amount is None or amount <= 0:
-    errors.append("Amount must be positive")
-
-if errors:
-    st.error("\n".join(["❌ " + e for e in errors]))
-else:
-    prepaid_sequential_id = deduct_prepaid_funds(
-        final_cid, float(amount), dt.strftime("%Y-%m-%d"),
-        salesperson, int(total_quantity), remark, plats
-    )
-    if prepaid_sequential_id > 0:
-        remaining_balance = get_customer_balance(final_cid)
-        st.success(f"✅ Sale processed! Sale ID: #P{prepaid_sequential_id:02d}")
-        balance_color = "green" if remaining_balance >= 0 else "red"
-        st.markdown(f"💰 **Remaining Balance:** <span style='color:{balance_color}'>₹{remaining_balance:.2f}</span>", unsafe_allow_html=True)
+            except:
+                st.info("💰 New customer - Balance: ₹0.00")
         
-        time.sleep(2)
-        st.session_state.deduct_funds_key += 1
-        st.rerun()
+        plats = platform_inputs(f"deduct_funds_{st.session_state.deduct_funds_key}")
+        
+        amount = st.number_input("Amount to Deduct", min_value=0.0, step=1.0, format="%0.2f", key=f'deduct_funds_amount_{st.session_state.deduct_funds_key}')
+        remark = st.text_area("Remark (optional)", key=f'deduct_funds_remark_{st.session_state.deduct_funds_key}')
+        
+        if st.button("Process Sale", type="primary"):
+            errors = []
+            if not dt:
+                errors.append("Date is required")
+            if not salesperson:
+                errors.append("Salesperson is required")
+            if cid == -1 and not cust_name:
+                errors.append("Customer name is required")
+            
+            final_cid = cid
+            if cid == -1 and cust_name:
+                final_cid = ensure_customer(cust_name)
+
+            if final_cid == -1:
+                errors.append("Customer selection is required")
+            if not plats:
+                errors.append("At least one platform is required")
+            else:
+                for (_p_id, acc, _qty) in plats:
+                    if not acc:
+                        errors.append("Platform ID required for all selected platforms")
+
+            total_quantity = sum(p[2] for p in plats)
+            if total_quantity < 1:
+                errors.append("Total quantity must be at least 1")
+            if amount is None or amount <= 0:
+                errors.append("Amount must be positive")
+
+            if errors:
+                st.error("\n".join(["❌ " + e for e in errors]))
+            else:
+                prepaid_sequential_id = deduct_prepaid_funds(
+                    final_cid, float(amount), dt.strftime("%Y-%m-%d"),
+                    salesperson, int(total_quantity), remark, plats
+                )
+                if prepaid_sequential_id > 0:
+                    remaining_balance = get_customer_balance(final_cid)
+                    st.success(f"✅ Sale processed! Sale ID: #P{prepaid_sequential_id:02d}")
+                    balance_color = "green" if remaining_balance >= 0 else "red"
+                    st.markdown(f"💰 **Remaining Balance:** <span style='color:{balance_color}'>₹{remaining_balance:.2f}</span>", unsafe_allow_html=True)
+                    
+                    time.sleep(2)
+                    st.session_state.deduct_funds_key += 1
+                    st.rerun()
 
 # --- View Balances ---
 elif prepaid_submenu == "View Balances":
