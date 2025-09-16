@@ -2039,29 +2039,29 @@ elif menu == "Prepaid Customer":
                 if errors:
                     st.error("\n".join(["❌ " + e for e in errors]))
                 else:
-                    prepaid_sequential_id = deduct_prepaid_funds(
-                        final_cid, float(amount), dt.strftime("%Y-%m-%d"), 
-                        salesperson, int(total_quantity), remark, plats
-                    )
-                    if prepaid_sequential_id > 0:
-                        remaining_balance = get_customer_balance(final_cid)
-                        st.success(f"✅ Sale processed! Sale ID: #P{prepaid_sequential_id:02d}")
-                        balance_color = "green" if remaining_balance >= 0 else "red"
-                        st.markdown(f"💰 **Remaining Balance:** <span style='color:{balance_color}'>₹{remaining_balance:.2f}</span>", unsafe_allow_html=True)
-                        
-                        time.sleep(2)
-                        st.session_state.deduct_funds_key += 1
-                        st.rerun()
-    
-    # --- View Balances ---
-    elif prepaid_submenu == "View Balances":
+    prepaid_sequential_id = deduct_prepaid_funds(
+        final_cid, float(amount), dt.strftime("%Y-%m-%d"),
+        salesperson, int(total_quantity), remark, plats
+    )
+    if prepaid_sequential_id > 0:
+        remaining_balance = get_customer_balance(final_cid)
+        st.success(f"✅ Sale processed! Sale ID: #P{prepaid_sequential_id:02d}")
+        balance_color = "green" if remaining_balance >= 0 else "red"
+        st.markdown(f"💰 **Remaining Balance:** <span style='color:{balance_color}'>₹{remaining_balance:.2f}</span>", unsafe_allow_html=True)
+
+        time.sleep(2)
+        st.session_state.deduct_funds_key += 1
+        st.rerun()
+
+# --- View Balances ---
+elif prepaid_submenu == "View Balances":
     st.subheader("💰 Prepaid Customer Balances")
-    
+
     # Add refresh button to force cache clear
     if st.button("🔄 Refresh Balances"):
         get_prepaid_balances.clear()
         st.rerun()
-    
+
     balances_df = get_prepaid_balances()
     if not balances_df.empty:
         # Format balance column with colors
@@ -2070,11 +2070,11 @@ elif menu == "Prepaid Customer":
                 return f"<span style='color:green'>₹{balance:.2f}</span>"
             else:
                 return f"<span style='color:red'>₹{balance:.2f}</span>"
-        
+
         balances_df['formatted_balance'] = balances_df['balance'].apply(format_balance)
         display_df = balances_df[['customer', 'formatted_balance']].copy()
         display_df.columns = ['Customer', 'Balance']
-        
+
         st.markdown(display_df.to_html(escape=False, index=False), unsafe_allow_html=True)
         
         # Summary
