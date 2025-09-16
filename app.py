@@ -2062,226 +2062,226 @@ elif menu == "Prepaid Customer":
                         st.rerun()
 
     # --- View Balances ---
-elif prepaid_submenu == "View Balances":
-    st.subheader("💰 Prepaid Customer Balances")
+    elif prepaid_submenu == "View Balances":
+        st.subheader("💰 Prepaid Customer Balances")
 
-    # Add refresh button to force cache clear
-    if st.button("🔄 Refresh Balances"):
-        get_prepaid_balances.clear()
-        st.rerun()
+        # Add refresh button to force cache clear
+        if st.button("🔄 Refresh Balances"):
+            get_prepaid_balances.clear()
+            st.rerun()
 
-    balances_df = get_prepaid_balances()
-    
-    # Filter to only show customers with non-zero balances OR customers who have had prepaid transactions
-    if not balances_df.empty:
-        # Get list of customers who have had prepaid transactions
-        transactions_df = get_prepaid_transactions()
-        customers_with_transactions = set()
-        if not transactions_df.empty:
-            customers_with_transactions = set(transactions_df['customer'].unique())
-            
-        # Filter balances to show only:
-        # 1. Customers with non-zero balances, OR
-        # 2. Customers who have had prepaid transactions (even if balance is now zero)
-        prepaid_customers_df = balances_df[
-            (balances_df['balance'] != 0) | 
-            (balances_df['customer'].isin(customers_with_transactions))
-        ]
+        balances_df = get_prepaid_balances()
         
-        if not prepaid_customers_df.empty:
-            # Format balance column with colors
-            def format_balance(balance):
-                if balance >= 0:
-                    return f"<span style='color:green'>₹{balance:.2f}</span>"
-                else:
-                    return f"<span style='color:red'>₹{balance:.2f}</span>"
-
-            prepaid_customers_df['formatted_balance'] = prepaid_customers_df['balance'].apply(format_balance)
-            display_df = prepaid_customers_df[['customer', 'formatted_balance']].copy()
-            display_df.columns = ['Customer', 'Balance']
-
-            st.markdown(display_df.to_html(escape=False, index=False), unsafe_allow_html=True)
-            
-            # Summary
-            total_balance = prepaid_customers_df['balance'].sum()
-            positive_balance = prepaid_customers_df[prepaid_customers_df['balance'] >= 0]['balance'].sum()
-            negative_balance = prepaid_customers_df[prepaid_customers_df['balance'] < 0]['balance'].sum()
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("💎 Total Balance", f"₹{total_balance:.2f}")
-            with col2:
-                st.metric("💚 Positive Balance", f"₹{positive_balance:.2f}")
-            with col3:
-                st.metric("❤️ Negative Balance", f"₹{negative_balance:.2f}")
+        # Filter to only show customers with non-zero balances OR customers who have had prepaid transactions
+        if not balances_df.empty:
+            # Get list of customers who have had prepaid transactions
+            transactions_df = get_prepaid_transactions()
+            customers_with_transactions = set()
+            if not transactions_df.empty:
+                customers_with_transactions = set(transactions_df['customer'].unique())
                 
-            # Show count of prepaid customers
-            st.info(f"Showing {len(prepaid_customers_df)} customers with prepaid activity")
-        else:
-            st.info("No customers with prepaid activity found.")
-    else:
-        st.info("No prepaid customers found.")
-        
-    # Show last updated time
-    st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
-    
-# --- Transaction History ---
-elif prepaid_submenu == "Transaction History":
-    st.subheader("📜 Prepaid Transaction History")
-    
-    customers_df = get_customers()
-    if not customers_df.empty:
-        col1, col2 = st.columns(2)
-        with col1:
-            selected_customer = st.selectbox("Select Customer (optional)", ["All"] + customers_df["name"].tolist())
-        with col2:
-            selected_type = st.selectbox("Transaction Type", ["All"] + PREPAID_TRANSACTION_TYPES)
-        
-        transactions_df = get_prepaid_transactions()
-        
-        if not transactions_df.empty:
-            # Apply filters
-            filtered_df = transactions_df.copy()
-            if selected_customer != "All":
-                filtered_df = filtered_df[filtered_df["customer"] == selected_customer]
-            if selected_type != "All":
-                filtered_df = filtered_df[filtered_df["transaction_type"] == selected_type]
+            # Filter balances to show only:
+            # 1. Customers with non-zero balances, OR
+            # 2. Customers who have had prepaid transactions (even if balance is now zero)
+            prepaid_customers_df = balances_df[
+                (balances_df['balance'] != 0) | 
+                (balances_df['customer'].isin(customers_with_transactions))
+            ]
             
-            if not filtered_df.empty:
-                # Format amount column with colors
-                def format_amount(row):
-                    amt = row['amount']
-                    if row['transaction_type'] == 'Credit':
-                        return f"🟢 +₹{amt:.2f}"
+            if not prepaid_customers_df.empty:
+                # Format balance column with colors
+                def format_balance(balance):
+                    if balance >= 0:
+                        return f"<span style='color:green'>₹{balance:.2f}</span>"
                     else:
-                        return f"🔴 -₹{amt:.2f}"
+                        return f"<span style='color:red'>₹{balance:.2f}</span>"
+
+                prepaid_customers_df['formatted_balance'] = prepaid_customers_df['balance'].apply(format_balance)
+                display_df = prepaid_customers_df[['customer', 'formatted_balance']].copy()
+                display_df.columns = ['Customer', 'Balance']
+
+                st.markdown(display_df.to_html(escape=False, index=False), unsafe_allow_html=True)
                 
-                display_df = filtered_df.copy()
-                display_df['Amount'] = display_df.apply(format_amount, axis=1)
-                
-                # Choose columns to show
-                columns_to_show = ['date', 'customer', 'transaction_type', 'Amount', 'description', 'salesperson', 'bank', 'remark']
-                display_df = display_df[columns_to_show].copy()
-                display_df.columns = ['Date', 'Customer', 'Type', 'Amount', 'Description', 'Salesperson', 'Bank', 'Remark']
-                
-                # Display clean table
-                st.dataframe(display_df, use_container_width=True)
-                
-                # Summary metrics
-                credit_total = filtered_df[filtered_df['transaction_type'] == 'Credit']['amount'].sum()
-                debit_total = filtered_df[filtered_df['transaction_type'] == 'Debit']['amount'].sum()
-                net_amount = credit_total - debit_total
-                net_color = "green" if net_amount >= 0 else "red"
+                # Summary
+                total_balance = prepaid_customers_df['balance'].sum()
+                positive_balance = prepaid_customers_df[prepaid_customers_df['balance'] >= 0]['balance'].sum()
+                negative_balance = prepaid_customers_df[prepaid_customers_df['balance'] < 0]['balance'].sum()
                 
                 col1, col2, col3 = st.columns(3)
-                col1.metric("💚 Total Credits", f"₹{credit_total:.2f}")
-                col2.metric("❤️ Total Debits", f"₹{debit_total:.2f}")
-                col3.markdown(f"**💙 Net:** <span style='color:{net_color}'>₹{net_amount:.2f}</span>", unsafe_allow_html=True)
+                with col1:
+                    st.metric("💎 Total Balance", f"₹{total_balance:.2f}")
+                with col2:
+                    st.metric("💚 Positive Balance", f"₹{positive_balance:.2f}")
+                with col3:
+                    st.metric("❤️ Negative Balance", f"₹{negative_balance:.2f}")
+                    
+                # Show count of prepaid customers
+                st.info(f"Showing {len(prepaid_customers_df)} customers with prepaid activity")
             else:
-                st.info("No transactions found for the selected filters.")
+                st.info("No customers with prepaid activity found.")
         else:
-            st.info("No prepaid transactions found.")
-    else:
-        st.info("No customers found.")
+            st.info("No prepaid customers found.")
             
-  # --- Prepaid Platform ID List ---
-elif prepaid_submenu == "Prepaid Platform ID List":
-    st.subheader("🧾 Prepaid Platform ID Management")
-    
-    # Get prepaid platform data
-    prepaid_platforms_df = get_prepaid_sale_platforms_df()
-    prepaid_sales_df = get_prepaid_sales()
-    
-    if not prepaid_platforms_df.empty and not prepaid_sales_df.empty:
-        # Merge platform data with sales data using sequential_id
-        full_df = prepaid_platforms_df.merge(prepaid_sales_df, left_on="prepaid_sale_id", right_on="id", how="left")
-        full_df = full_df.sort_values(by="date", ascending=False).reset_index(drop=True)
-        full_df.rename(columns={'quantity_x': 'Quantity', 'id_x': 'prepaid_sale_platform_id'}, inplace=True)
-        full_df = full_df[['prepaid_sale_platform_id', 'sequential_id', 'date', 'customer',
-                            'platform', 'platform_account_id', 'Quantity', 'is_archived']]
+        # Show last updated time
+        st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
         
-        platforms_df = get_platforms()
-        platform_names = platforms_df["name"].tolist()
+    # --- Transaction History ---
+    elif prepaid_submenu == "Transaction History":
+        st.subheader("📜 Prepaid Transaction History")
         
-        # Platform filter
-        selected_platform_name = st.selectbox("Filter by Platform", options=["All"] + platform_names, key="prepaid_platform_filter")
-        
-        filtered_df = full_df.copy()
-        if selected_platform_name != "All":
-            filtered_df = filtered_df[filtered_df["platform"] == selected_platform_name]
-        
-        if not filtered_df.empty:
-            st.write("Use checkboxes to mark items as archived/done:")
-            
-            # Header row
-            col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([0.8, 1, 1.2, 1.5, 1.2, 1.8, 0.8, 1.2])
+        customers_df = get_customers()
+        if not customers_df.empty:
+            col1, col2 = st.columns(2)
             with col1:
-                st.write("**Archive**")
+                selected_customer = st.selectbox("Select Customer (optional)", ["All"] + customers_df["name"].tolist())
             with col2:
-                st.write("**Sale ID**")
-            with col3:
-                st.write("**Date**")
-            with col4:
-                st.write("**Customer**")
-            with col5:
-                st.write("**Platform**")
-            with col6:
-                st.write("**Platform ID**")
-            with col7:
-                st.write("**Qty**")
-            with col8:
-                st.write("**Status**")
+                selected_type = st.selectbox("Transaction Type", ["All"] + PREPAID_TRANSACTION_TYPES)
             
-            st.markdown("---")
+            transactions_df = get_prepaid_transactions()
             
-            # Display rows
-            for _, row in filtered_df.iterrows():
-                prepaid_sale_platform_id = row['prepaid_sale_platform_id']
+            if not transactions_df.empty:
+                # Apply filters
+                filtered_df = transactions_df.copy()
+                if selected_customer != "All":
+                    filtered_df = filtered_df[filtered_df["customer"] == selected_customer]
+                if selected_type != "All":
+                    filtered_df = filtered_df[filtered_df["transaction_type"] == selected_type]
+                
+                if not filtered_df.empty:
+                    # Format amount column with colors
+                    def format_amount(row):
+                        amt = row['amount']
+                        if row['transaction_type'] == 'Credit':
+                            return f"🟢 +₹{amt:.2f}"
+                        else:
+                            return f"🔴 -₹{amt:.2f}"
+                    
+                    display_df = filtered_df.copy()
+                    display_df['Amount'] = display_df.apply(format_amount, axis=1)
+                    
+                    # Choose columns to show
+                    columns_to_show = ['date', 'customer', 'transaction_type', 'Amount', 'description', 'salesperson', 'bank', 'remark']
+                    display_df = display_df[columns_to_show].copy()
+                    display_df.columns = ['Date', 'Customer', 'Type', 'Amount', 'Description', 'Salesperson', 'Bank', 'Remark']
+                    
+                    # Display clean table
+                    st.dataframe(display_df, use_container_width=True)
+                    
+                    # Summary metrics
+                    credit_total = filtered_df[filtered_df['transaction_type'] == 'Credit']['amount'].sum()
+                    debit_total = filtered_df[filtered_df['transaction_type'] == 'Debit']['amount'].sum()
+                    net_amount = credit_total - debit_total
+                    net_color = "green" if net_amount >= 0 else "red"
+                    
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("💚 Total Credits", f"₹{credit_total:.2f}")
+                    col2.metric("❤️ Total Debits", f"₹{debit_total:.2f}")
+                    col3.markdown(f"**💙 Net:** <span style='color:{net_color}'>₹{net_amount:.2f}</span>", unsafe_allow_html=True)
+                else:
+                    st.info("No transactions found for the selected filters.")
+            else:
+                st.info("No prepaid transactions found.")
+        else:
+            st.info("No customers found.")
+                
+    # --- Prepaid Platform ID List ---
+    elif prepaid_submenu == "Prepaid Platform ID List":
+        st.subheader("🧾 Prepaid Platform ID Management")
+        
+        # Get prepaid platform data
+        prepaid_platforms_df = get_prepaid_sale_platforms_df()
+        prepaid_sales_df = get_prepaid_sales()
+        
+        if not prepaid_platforms_df.empty and not prepaid_sales_df.empty:
+            # Merge platform data with sales data using sequential_id
+            full_df = prepaid_platforms_df.merge(prepaid_sales_df, left_on="prepaid_sale_id", right_on="id", how="left")
+            full_df = full_df.sort_values(by="date", ascending=False).reset_index(drop=True)
+            full_df.rename(columns={'quantity_x': 'Quantity', 'id_x': 'prepaid_sale_platform_id'}, inplace=True)
+            full_df = full_df[['prepaid_sale_platform_id', 'sequential_id', 'date', 'customer',
+                                'platform', 'platform_account_id', 'Quantity', 'is_archived']]
+            
+            platforms_df = get_platforms()
+            platform_names = platforms_df["name"].tolist()
+            
+            # Platform filter
+            selected_platform_name = st.selectbox("Filter by Platform", options=["All"] + platform_names, key="prepaid_platform_filter")
+            
+            filtered_df = full_df.copy()
+            if selected_platform_name != "All":
+                filtered_df = filtered_df[filtered_df["platform"] == selected_platform_name]
+            
+            if not filtered_df.empty:
+                st.write("Use checkboxes to mark items as archived/done:")
+                
+                # Header row
                 col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([0.8, 1, 1.2, 1.5, 1.2, 1.8, 0.8, 1.2])
+                with col1:
+                    st.write("**Archive**")
+                with col2:
+                    st.write("**Sale ID**")
+                with col3:
+                    st.write("**Date**")
+                with col4:
+                    st.write("**Customer**")
+                with col5:
+                    st.write("**Platform**")
+                with col6:
+                    st.write("**Platform ID**")
+                with col7:
+                    st.write("**Qty**")
+                with col8:
+                    st.write("**Status**")
+                
+                st.markdown("---")
+                
+                # Display rows
+                for _, row in filtered_df.iterrows():
+                    prepaid_sale_platform_id = row['prepaid_sale_platform_id']
+                    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([0.8, 1, 1.2, 1.5, 1.2, 1.8, 0.8, 1.2])
+                    
+                    with col1:
+                        current_archived = bool(row['is_archived'])
+                        archived = st.checkbox("", value=current_archived, key=f"prepaid_archive_{prepaid_sale_platform_id}")
+                        
+                        if archived != current_archived:
+                            archive_prepaid_platform_id(prepaid_sale_platform_id, archived)
+                            status_text = "Done" if archived else "Pending"
+                            st.toast(f"✅ {row['platform_account_id']} → {status_text}")
+                            st.rerun()
+                    
+                    with col2:
+                        st.write(f"#P{row['sequential_id']:02d}")
+                    with col3:
+                        st.write(row['date'])
+                    with col4:
+                        st.write(row['customer'])
+                    with col5:
+                        st.write(row['platform'])
+                    with col6:
+                        st.write(row['platform_account_id'])
+                    with col7:
+                        st.write(int(row['Quantity']))
+                    with col8:
+                        if archived:
+                            st.success("✅ Done")
+                        else:
+                            st.write("⏳ Pending")
+                
+                # Summary statistics
+                st.subheader("📊 Prepaid Platform Summary")
+                col1, col2, col3 = st.columns(3)
+                
+                total_items = len(filtered_df)
+                archived_items = len(filtered_df[filtered_df['is_archived'] == True])
+                pending_items = total_items - archived_items
                 
                 with col1:
-                    current_archived = bool(row['is_archived'])
-                    archived = st.checkbox("", value=current_archived, key=f"prepaid_archive_{prepaid_sale_platform_id}")
-                    
-                    if archived != current_archived:
-                        archive_prepaid_platform_id(prepaid_sale_platform_id, archived)
-                        status_text = "Done" if archived else "Pending"
-                        st.toast(f"✅ {row['platform_account_id']} → {status_text}")
-                        st.rerun()
-                
+                    st.metric("Total Items", total_items)
                 with col2:
-                    st.write(f"#P{row['sequential_id']:02d}")
+                    st.metric("Archived Items", archived_items)
                 with col3:
-                    st.write(row['date'])
-                with col4:
-                    st.write(row['customer'])
-                with col5:
-                    st.write(row['platform'])
-                with col6:
-                    st.write(row['platform_account_id'])
-                with col7:
-                    st.write(int(row['Quantity']))
-                with col8:
-                    if archived:
-                        st.success("✅ Done")
-                    else:
-                        st.write("⏳ Pending")
-            
-            # Summary statistics
-            st.subheader("📊 Prepaid Platform Summary")
-            col1, col2, col3 = st.columns(3)
-            
-            total_items = len(filtered_df)
-            archived_items = len(filtered_df[filtered_df['is_archived'] == True])
-            pending_items = total_items - archived_items
-            
-            with col1:
-                st.metric("Total Items", total_items)
-            with col2:
-                st.metric("Archived Items", archived_items)
-            with col3:
-                st.metric("Pending Items", pending_items)
+                    st.metric("Pending Items", pending_items)
+            else:
+                st.info("No prepaid platform data found for the selected filter.")
         else:
-            st.info("No prepaid platform data found for the selected filter.")
-    else:
-        st.info("No prepaid sales data found.")
+            st.info("No prepaid sales data found.")
