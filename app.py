@@ -25,7 +25,7 @@ DEFAULT_PLATFORMS = [
     "Shutterstock", "123RF", "Adobe", "DepositPhoto", "DreamsTime", "Envato Elements",
     "FreePik", "IstockPhoto", "PngTree", "Motion Array", "Creative Fabrica", "Deezy",
     "Pikbest", "Designi", "Flaticon", "IconScout", "RawPixel", "UI8", "Vecteezy",
-    "Getty Images", "VectorStock", "Alamy", "Lovepik"
+    "Getty Images", "VectorStock", "Alamy", "Lovepik", "Adobestock Video", "Shutterstock Video"
 ]
 STATUS_OPTIONS = ["Paid", "Pending"]
 PREPAID_TRANSACTION_TYPES = ["Credit", "Debit"]
