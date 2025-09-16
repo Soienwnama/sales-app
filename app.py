@@ -2026,19 +2026,24 @@ elif menu == "Prepaid Customer":
                 if cid == -1 and cust_name:
                     final_cid = ensure_customer(cust_name)
                 
-                if final_cid == -1: errors.append("Customer selection is required")
-                if not plats: errors.append("At least one platform is required")
-                else:
-                    for (_p_id, acc, _qty) in plats:
-                        if not acc: errors.append("Platform ID required for all selected platforms")
-                
-                total_quantity = sum(p[2] for p in plats)
-                if total_quantity < 1: errors.append("Total quantity must be at least 1")
-                if amount is None or amount <= 0: errors.append("Amount must be positive")
-                
-                if errors:
-                    st.error("\n".join(["❌ " + e for e in errors]))
-                else:
+                if final_cid == -1:
+    errors.append("Customer selection is required")
+if not plats:
+    errors.append("At least one platform is required")
+else:
+    for (_p_id, acc, _qty) in plats:
+        if not acc:
+            errors.append("Platform ID required for all selected platforms")
+
+total_quantity = sum(p[2] for p in plats)
+if total_quantity < 1:
+    errors.append("Total quantity must be at least 1")
+if amount is None or amount <= 0:
+    errors.append("Amount must be positive")
+
+if errors:
+    st.error("\n".join(["❌ " + e for e in errors]))
+else:
     prepaid_sequential_id = deduct_prepaid_funds(
         final_cid, float(amount), dt.strftime("%Y-%m-%d"),
         salesperson, int(total_quantity), remark, plats
@@ -2048,7 +2053,7 @@ elif menu == "Prepaid Customer":
         st.success(f"✅ Sale processed! Sale ID: #P{prepaid_sequential_id:02d}")
         balance_color = "green" if remaining_balance >= 0 else "red"
         st.markdown(f"💰 **Remaining Balance:** <span style='color:{balance_color}'>₹{remaining_balance:.2f}</span>", unsafe_allow_html=True)
-
+        
         time.sleep(2)
         st.session_state.deduct_funds_key += 1
         st.rerun()
