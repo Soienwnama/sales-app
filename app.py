@@ -2079,7 +2079,7 @@ elif prepaid_submenu == "View Balances":
         customers_with_transactions = set()
         if not transactions_df.empty:
             customers_with_transactions = set(transactions_df['customer'].unique())
-        
+            
         # Filter balances to show only:
         # 1. Customers with non-zero balances, OR
         # 2. Customers who have had prepaid transactions (even if balance is now zero)
@@ -2124,10 +2124,10 @@ elif prepaid_submenu == "View Balances":
         
     # Show last updated time
     st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
-        
-    # --- Transaction History ---
-    elif prepaid_submenu == "Transaction History":
-        st.subheader("📜 Prepaid Transaction History")
+    
+# --- Transaction History ---
+elif prepaid_submenu == "Transaction History":
+    st.subheader("📜 Prepaid Transaction History")
         
         customers_df = get_customers()
         if not customers_df.empty:
