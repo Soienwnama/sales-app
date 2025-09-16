@@ -2128,61 +2128,61 @@ elif prepaid_submenu == "View Balances":
 # --- Transaction History ---
 elif prepaid_submenu == "Transaction History":
     st.subheader("📜 Prepaid Transaction History")
+    
+    customers_df = get_customers()
+    if not customers_df.empty:
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_customer = st.selectbox("Select Customer (optional)", ["All"] + customers_df["name"].tolist())
+        with col2:
+            selected_type = st.selectbox("Transaction Type", ["All"] + PREPAID_TRANSACTION_TYPES)
         
-        customers_df = get_customers()
-        if not customers_df.empty:
-            col1, col2 = st.columns(2)
-            with col1:
-                selected_customer = st.selectbox("Select Customer (optional)", ["All"] + customers_df["name"].tolist())
-            with col2:
-                selected_type = st.selectbox("Transaction Type", ["All"] + PREPAID_TRANSACTION_TYPES)
+        transactions_df = get_prepaid_transactions()
+        
+        if not transactions_df.empty:
+            # Apply filters
+            filtered_df = transactions_df.copy()
+            if selected_customer != "All":
+                filtered_df = filtered_df[filtered_df["customer"] == selected_customer]
+            if selected_type != "All":
+                filtered_df = filtered_df[filtered_df["transaction_type"] == selected_type]
             
-            transactions_df = get_prepaid_transactions()
-            
-            if not transactions_df.empty:
-                # Apply filters
-                filtered_df = transactions_df.copy()
-                if selected_customer != "All":
-                    filtered_df = filtered_df[filtered_df["customer"] == selected_customer]
-                if selected_type != "All":
-                    filtered_df = filtered_df[filtered_df["transaction_type"] == selected_type]
+            if not filtered_df.empty:
+                # Format amount column with colors
+                def format_amount(row):
+                    amt = row['amount']
+                    if row['transaction_type'] == 'Credit':
+                        return f"🟢 +₹{amt:.2f}"
+                    else:
+                        return f"🔴 -₹{amt:.2f}"
                 
-                if not filtered_df.empty:
-                    # Format amount column with colors
-                    def format_amount(row):
-                        amt = row['amount']
-                        if row['transaction_type'] == 'Credit':
-                            return f"🟢 +₹{amt:.2f}"
-                        else:
-                            return f"🔴 -₹{amt:.2f}"
-                    
-                    display_df = filtered_df.copy()
-                    display_df['Amount'] = display_df.apply(format_amount, axis=1)
-                    
-                    # Choose columns to show
-                    columns_to_show = ['date', 'customer', 'transaction_type', 'Amount', 'description', 'salesperson', 'bank', 'remark']
-                    display_df = display_df[columns_to_show].copy()
-                    display_df.columns = ['Date', 'Customer', 'Type', 'Amount', 'Description', 'Salesperson', 'Bank', 'Remark']
-                    
-                    # Display clean table
-                    st.dataframe(display_df, use_container_width=True)
-                    
-                    # Summary metrics
-                    credit_total = filtered_df[filtered_df['transaction_type'] == 'Credit']['amount'].sum()
-                    debit_total = filtered_df[filtered_df['transaction_type'] == 'Debit']['amount'].sum()
-                    net_amount = credit_total - debit_total
-                    net_color = "green" if net_amount >= 0 else "red"
-                    
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("💚 Total Credits", f"₹{credit_total:.2f}")
-                    col2.metric("❤️ Total Debits", f"₹{debit_total:.2f}")
-                    col3.markdown(f"**💙 Net:** <span style='color:{net_color}'>₹{net_amount:.2f}</span>", unsafe_allow_html=True)
-                else:
-                    st.info("No transactions found for the selected filters.")
+                display_df = filtered_df.copy()
+                display_df['Amount'] = display_df.apply(format_amount, axis=1)
+                
+                # Choose columns to show
+                columns_to_show = ['date', 'customer', 'transaction_type', 'Amount', 'description', 'salesperson', 'bank', 'remark']
+                display_df = display_df[columns_to_show].copy()
+                display_df.columns = ['Date', 'Customer', 'Type', 'Amount', 'Description', 'Salesperson', 'Bank', 'Remark']
+                
+                # Display clean table
+                st.dataframe(display_df, use_container_width=True)
+                
+                # Summary metrics
+                credit_total = filtered_df[filtered_df['transaction_type'] == 'Credit']['amount'].sum()
+                debit_total = filtered_df[filtered_df['transaction_type'] == 'Debit']['amount'].sum()
+                net_amount = credit_total - debit_total
+                net_color = "green" if net_amount >= 0 else "red"
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("💚 Total Credits", f"₹{credit_total:.2f}")
+                col2.metric("❤️ Total Debits", f"₹{debit_total:.2f}")
+                col3.markdown(f"**💙 Net:** <span style='color:{net_color}'>₹{net_amount:.2f}</span>", unsafe_allow_html=True)
             else:
-                st.info("No prepaid transactions found.")
+                st.info("No transactions found for the selected filters.")
         else:
-            st.info("No customers found.")
+            st.info("No prepaid transactions found.")
+    else:
+        st.info("No customers found.")
             
     # --- Prepaid Platform ID List ---
     elif prepaid_submenu == "Prepaid Platform ID List":
