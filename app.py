@@ -745,15 +745,27 @@ def update_prepaid_sale(sequential_id: int, date_str: str, salesperson: str, cus
     conn = get_conn()
     c = conn.cursor()
     try:
-        # Get database ID and original details from sequential ID
-        c.execute("SELECT id, total_amount, customer_id FROM prepaid_sales WHERE sequential_id=%s", (sequential_id,))
+        # Get database ID from sequential ID
+        c.execute("SELECT id, customer_id, total_amount FROM prepaid_sales WHERE sequential_id=%s", (sequential_id,))
         result = c.fetchone()
         if not result:
             raise ValueError(f"Prepaid sale with sequential ID {sequential_id} not found")
-        prepaid_sale_id, original_amount, original_customer_id = result
+        prepaid_sale_id, old_customer_id, old_amount = result
         
-        # Calculate the difference in amount
-        amount_difference = float(amount) - float(original_amount)
+        # Calculate balance adjustment if customer or amount changed
+        if old_customer_id != customer_id or float(old_amount) != float(amount):
+            # Reverse old transaction (add back to old customer)
+            c.execute("UPDATE prepaid_balances SET balance = balance + %s WHERE customer_id = %s", (float(old_amount), old_customer_id))
+            
+            # Apply new transaction (deduct from new customer)
+            ensure_prepaid_balance(customer_id)
+            c.execute("UPDATE prepaid_balances SET balance = balance - %s WHERE customer_id = %s", (float(amount), customer_id))
+            
+            # Update transaction record
+            c.execute(
+                "UPDATE prepaid_transactions SET customer_id=%s, amount=%s, date=%s, salesperson=%s, remark=%s WHERE description LIKE %s",
+                (customer_id, amount, date_str, salesperson, remark, f"Purchase - Sale #P{sequential_id:02d}")
+            )
         
         # Update prepaid sale record
         c.execute(
@@ -761,50 +773,16 @@ def update_prepaid_sale(sequential_id: int, date_str: str, salesperson: str, cus
             (date_str, salesperson, customer_id, total_quantity, amount, remark, prepaid_sale_id),
         )
         
-        # Delete and recreate platform entries
+        # Update platform details
         c.execute("DELETE FROM prepaid_sale_platforms WHERE prepaid_sale_id=%s", (prepaid_sale_id,))
-        
         for platform_id, platform_account_id, quantity in platform_map:
             c.execute(
                 "INSERT INTO prepaid_sale_platforms(prepaid_sale_id, platform_id, platform_account_id, quantity) VALUES (%s,%s,%s,%s)",
                 (prepaid_sale_id, platform_id, platform_account_id.strip(), quantity),
             )
         
-        # Handle customer change
-        if customer_id != original_customer_id:
-            # Restore balance to original customer
-            ensure_prepaid_balance(original_customer_id)
-            c.execute("UPDATE prepaid_balances SET balance = balance + %s WHERE customer_id = %s", (original_amount, original_customer_id))
-            
-            # Deduct from new customer
-            ensure_prepaid_balance(customer_id)
-            c.execute("UPDATE prepaid_balances SET balance = balance - %s WHERE customer_id = %s", (amount, customer_id))
-            
-            # Update transaction customer
-            c.execute(
-                "UPDATE prepaid_transactions SET customer_id=%s, date=%s, amount=%s, salesperson=%s, remark=%s WHERE description LIKE %s AND customer_id=%s",
-                (customer_id, date_str, amount, salesperson, remark, f"Purchase - Sale #P{sequential_id:02d}", original_customer_id)
-            )
-        else:
-            # Same customer, just adjust the difference
-            if amount_difference != 0:
-                ensure_prepaid_balance(customer_id)
-                c.execute("UPDATE prepaid_balances SET balance = balance - %s WHERE customer_id = %s", (amount_difference, customer_id))
-            
-            # Update the associated transaction record
-            c.execute(
-                "UPDATE prepaid_transactions SET date=%s, amount=%s, salesperson=%s, remark=%s WHERE description LIKE %s AND customer_id=%s",
-                (date_str, amount, salesperson, remark, f"Purchase - Sale #P{sequential_id:02d}", customer_id)
-            )
-        
         conn.commit()
-        
-        # Force cache invalidation
         invalidate_all_caches()
-        
-        # Clear Streamlit's cache completely
-        st.cache_data.clear()
-        
     except Exception as e:
         conn.rollback()
         st.error(f"Error updating prepaid sale: {e}")
@@ -823,24 +801,20 @@ def delete_prepaid_sale(sequential_id: int):
             raise ValueError(f"Prepaid sale with sequential ID {sequential_id} not found")
         prepaid_sale_id, customer_id, amount = result
         
-        # Delete platform entries
+        # Reverse the balance deduction (add back to customer)
+        c.execute("UPDATE prepaid_balances SET balance = balance + %s WHERE customer_id = %s", (float(amount), customer_id))
+        
+        # Delete related records
         c.execute("DELETE FROM prepaid_sale_platforms WHERE prepaid_sale_id=%s", (prepaid_sale_id,))
-        
-        # Delete prepaid sale
+        c.execute("DELETE FROM prepaid_transactions WHERE description LIKE %s", (f"Purchase - Sale #P{sequential_id:02d}",))
         c.execute("DELETE FROM prepaid_sales WHERE id=%s", (prepaid_sale_id,))
-        
-        # Delete associated transaction and restore balance
-        c.execute("DELETE FROM prepaid_transactions WHERE description LIKE %s AND customer_id=%s", 
-                 (f"Purchase - Sale #P{sequential_id:02d}", customer_id))
-        
-        # Restore balance
-        c.execute("UPDATE prepaid_balances SET balance = balance + %s WHERE customer_id = %s", (amount, customer_id))
         
         conn.commit()
         invalidate_all_caches()
     except Exception as e:
         conn.rollback()
         st.error(f"Error deleting prepaid sale: {e}")
+        raise e
     finally:
         conn.close()
         
@@ -1143,13 +1117,20 @@ elif menu == "Edit Sales":
         sel_option = st.selectbox("Select Sale", formatted_options)
         
         try:
-            # Extract sequential ID and sale type from the selection
+            # Extract details from selection
             parts = sel_option.split(" - ")
-            sequential_id_str = parts[0].replace("#P", "").replace("#", "")
-            selected_sequential_id = int(sequential_id_str)
+            formatted_id = parts[0]
             sale_type = parts[3]
             
-            # Find the row with matching sequential_id and sale_type
+            # Extract sequential ID
+            if formatted_id.startswith("#P"):
+                selected_sequential_id = int(formatted_id.replace("#P", ""))
+                is_prepaid = True
+            else:
+                selected_sequential_id = int(formatted_id.replace("#", ""))
+                is_prepaid = False
+            
+            # Find the matching row
             matching_rows = sales_df[
                 (sales_df["sequential_id"] == selected_sequential_id) & 
                 (sales_df["sale_type"] == sale_type)
@@ -1165,10 +1146,11 @@ elif menu == "Edit Sales":
             st.stop()
         
         # Get platform data based on sale type
-        if row['sale_type'] == 'Prepaid':
+        if row["sale_type"] == "Prepaid":
             sp_df = get_prepaid_sale_platforms_df()
             my_plats = sp_df[sp_df["prepaid_sale_id"] == row['id']]
-            my_plats = my_plats.rename(columns={'prepaid_sale_id': 'sale_id'})  # Normalize column name
+            # Rename columns to match expected format
+            my_plats = my_plats.rename(columns={'prepaid_sale_id': 'sale_id'})
         else:
             sp_df = get_sale_platforms_df()
             my_plats = sp_df[(sp_df["sale_id"] == row['id']) & (sp_df["sale_type"] == "Regular")]
@@ -1190,8 +1172,8 @@ elif menu == "Edit Sales":
         
         st.markdown("---")
         
-        # For prepaid sales, don't show bank/status fields
-        if row['sale_type'] == 'Prepaid':
+        if row["sale_type"] == "Prepaid":
+            # For prepaid sales, only show amount (no bank/status)
             amount = st.number_input("Amount", min_value=0.0, step=1.0, format="%0.2f", value=float(row["amount"]))
             remark = st.text_area("Remark (optional)", value=row["remark"] or "")
             
@@ -1215,16 +1197,10 @@ elif menu == "Edit Sales":
                     st.error("\n".join(["❌ " + e for e in errs]))
                 else:
                     actual_sequential_id = row['sequential_id'] if not pd.isna(row['sequential_id']) else row['id']
-                    try:
-                        update_prepaid_sale(int(actual_sequential_id), dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), remark, plats)
-                        st.success("✅ Prepaid sale updated.")
-                        time.sleep(1)  # Give database time to update
-                        st.rerun()  # Force page refresh
-                    except Exception as e:
-                        st.error(f"Failed to update prepaid sale: {e}")
-
+                    update_prepaid_sale(int(actual_sequential_id), dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), remark, plats)
+                    st.success("✅ Prepaid sale updated.")
         else:
-            # Regular sale editing (existing code)
+            # For regular sales, show full form
             c1, c2, c3 = st.columns(3)
             with c1:
                 amount = st.number_input("Amount", min_value=0.0, step=1.0, format="%0.2f", value=float(row["amount"]))
@@ -1255,8 +1231,9 @@ elif menu == "Edit Sales":
                 if errs:
                     st.error("\n".join(["❌ " + e for e in errs]))
                 else:
+                    platform_map = plats
                     actual_sequential_id = row['sequential_id'] if not pd.isna(row['sequential_id']) else row['id']
-                    update_sale(int(actual_sequential_id), dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), status, bank, remark, plats)
+                    update_sale(int(actual_sequential_id), dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), status, bank, remark, platform_map)
                     st.success("✅ Sale updated.")
 
 # --- Delete Sales ---
@@ -1287,11 +1264,20 @@ elif menu == "Delete Sales":
         sel_option = st.selectbox("Select Sale", formatted_options)
         
         try:
+            # Extract details from selection
             parts = sel_option.split(" - ")
-            sequential_id_str = parts[0].replace("#P", "").replace("#", "")
-            selected_sequential_id = int(sequential_id_str)
+            formatted_id = parts[0]
             sale_type = parts[3]
             
+            # Extract sequential ID
+            if formatted_id.startswith("#P"):
+                selected_sequential_id = int(formatted_id.replace("#P", ""))
+                is_prepaid = True
+            else:
+                selected_sequential_id = int(formatted_id.replace("#", ""))
+                is_prepaid = False
+            
+            # Find the matching row
             matching_rows = sales_df[
                 (sales_df["sequential_id"] == selected_sequential_id) & 
                 (sales_df["sale_type"] == sale_type)
@@ -1307,17 +1293,20 @@ elif menu == "Delete Sales":
         except (ValueError, IndexError):
             st.error("Error selecting sale. Please try again.")
             st.stop()
-            
-        if row['sale_type'] == 'Prepaid':
-            st.warning(f"You are about to delete prepaid sale #P{int(actual_sequential_id):02d} for {row['customer']} on {row['date']} amount ₹{row['amount']}. This will restore ₹{row['amount']} to the customer's balance.")
-            if st.button("Confirm Delete Prepaid Sale", type="primary"):
-                delete_prepaid_sale(int(actual_sequential_id))
-                st.success("✅ Prepaid sale deleted and balance restored.")
+        
+        # Show different warning messages based on sale type
+        if row["sale_type"] == "Prepaid":
+            st.warning(f"You are about to delete prepaid sale #P{int(actual_sequential_id):02d} for {row['customer']} on {row['date']} amount ₹{row['amount']}. This will add ₹{row['amount']} back to the customer's prepaid balance.")
         else:
-            st.warning(f"You are about to delete sale #{int(actual_sequential_id):02d} for {row['customer']} on {row['date']} amount ₹{row['amount']}")
-            if st.button("Confirm Delete", type="primary"):
+            st.warning(f"You are about to delete regular sale #{int(actual_sequential_id):02d} for {row['customer']} on {row['date']} amount ₹{row['amount']}")
+        
+        if st.button("Confirm Delete", type="primary"):
+            if row["sale_type"] == "Prepaid":
+                delete_prepaid_sale(int(actual_sequential_id))
+                st.success("✅ Prepaid sale deleted successfully. Balance has been restored.")
+            else:
                 delete_sale(int(actual_sequential_id))
-                st.success("✅ Sale deleted successfully.")
+                st.success("✅ Regular sale deleted successfully.")
                 
 # --- Pending Payment ---
 elif menu == "Pending Payment":
