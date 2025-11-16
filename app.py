@@ -888,20 +888,18 @@ def customer_selector(key_suffix: str = "", default_customer: str = None) -> Tup
     
     options = customer_names + [ADD_NEW_CUSTOMER]
     default_index = 0
+    
+    # Fix: Properly find the default customer index
     if default_customer and default_customer in customer_names:
         default_index = customer_names.index(default_customer)
-    elif default_customer is None:
-        default_index = 0
-    else:
-        options = [default_customer] + customer_names + [ADD_NEW_CUSTOMER]
-        default_index = 0
-        
+    
     selection = st.selectbox(
         "Customer Name / Contact",
         options=options,
         index=default_index,
         key=f"cust_sel_{key_suffix}",
     )
+    
     if selection == ADD_NEW_CUSTOMER:
         new_name = st.text_input("Enter New Customer / Contact", key=f"new_cust_{key_suffix}")
         return (-1, new_name)
