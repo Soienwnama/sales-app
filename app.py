@@ -1130,7 +1130,17 @@ elif menu == "Edit Sales":
             
             formatted_options.append(f"{formatted_id} - {row['customer']} - {row['date']} - {row['sale_type']}")
         
-        sel_option = st.selectbox("Select Sale", formatted_options)
+        # Track the currently selected sale to detect changes
+        if 'current_edit_sale' not in st.session_state:
+            st.session_state.current_edit_sale = formatted_options[0] if formatted_options else None
+        
+        sel_option = st.selectbox("Select Sale", formatted_options, key="edit_sale_selector")
+        
+        # If selection changed, clear customer selector cache
+        if sel_option != st.session_state.current_edit_sale:
+            st.session_state.current_edit_sale = sel_option
+            clear_edit_state()
+            st.rerun()
         
         try:
             # Extract details from selection
@@ -1177,7 +1187,8 @@ elif menu == "Edit Sales":
         with col2:
             salesperson = st.selectbox("Salesperson", SALESPERSONS, index=SALESPERSONS.index(row["salesperson"]))
 
-        cid, cust_name = customer_selector("edit", default_customer=row['customer'])
+        # Use unique key with sale ID to force refresh when selection changes
+        cid, cust_name = customer_selector(f"edit_{selected_sequential_id}_{sale_type}", default_customer=row['customer'])
         if cid == -1 and cust_name:
             cid = ensure_customer(cust_name)
         elif cid == -1:
@@ -1215,6 +1226,8 @@ elif menu == "Edit Sales":
                     actual_sequential_id = row['sequential_id'] if not pd.isna(row['sequential_id']) else row['id']
                     update_prepaid_sale(int(actual_sequential_id), dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), remark, plats)
                     st.success("✅ Prepaid sale updated.")
+                    # Clear edit state after successful update
+                    clear_edit_state()
                     time.sleep(1)
                     st.rerun()
         else:
@@ -1253,6 +1266,8 @@ elif menu == "Edit Sales":
                     actual_sequential_id = row['sequential_id'] if not pd.isna(row['sequential_id']) else row['id']
                     update_sale(int(actual_sequential_id), dt.strftime("%Y-%m-%d"), salesperson, cid, int(total_quantity), float(amount), status, bank, remark, platform_map)
                     st.success("✅ Sale updated.")
+                    # Clear edit state after successful update
+                    clear_edit_state()
                     time.sleep(1)
                     st.rerun()
                     
