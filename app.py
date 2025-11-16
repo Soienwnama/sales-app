@@ -1105,7 +1105,6 @@ elif menu == "View Sales":
     else:
         st.info("No sales to display.")
 
-# --- Edit Sales ---
 elif menu == "Edit Sales":
     st.subheader("✏️ Edit Sales")
     sales_df = get_sales()
@@ -1943,54 +1942,101 @@ elif menu == "Prepaid Customer":
         ["Add Funds", "Deduct Funds", "View Balances", "Transaction History", "Prepaid Platform ID List"]
     )
     
-    # --- Add Funds ---
-    if prepaid_submenu == "Add Funds":
-        st.subheader("💰 Add Funds to Prepaid Customer")
+   
+# --- Add Sales ---
+if menu == "Add Sales":
+    st.subheader("➕ Add Sales")
+
+    if 'add_sales_key' not in st.session_state:
+        st.session_state.add_sales_key = 0
+    
+    # Track last selected customer to detect changes
+    if 'last_selected_customer' not in st.session_state:
+        st.session_state.last_selected_customer = None
+    
+    container_key = f'add_sales_container_{st.session_state.add_sales_key}'
+    with st.container(key=container_key):
+        col1, col2 = st.columns(2)
+        with col1:
+            dt = st.date_input("Date", value=date.today(), key=f'add_date_{st.session_state.add_sales_key}')
         
-        if 'add_funds_key' not in st.session_state:
-            st.session_state.add_funds_key = 0
+        # Customer selection first
+        cid, cust_name = customer_selector(f"add_{st.session_state.add_sales_key}")
         
-        container_key = f'add_funds_container_{st.session_state.add_funds_key}'
-        with st.container(key=container_key):
-            col1, col2 = st.columns(2)
-            with col1:
-                dt = st.date_input("Date", value=date.today(), key=f'add_funds_date_{st.session_state.add_funds_key}')
-            with col2:
-                salesperson = st.selectbox("Received By", SALESPERSONS, key=f'add_funds_salesperson_{st.session_state.add_funds_key}')
+        # Determine which customer name to use
+        selected_customer = cust_name if cid == -1 else None
+        if cid != -1:
+            customers_df = get_customers()
+            selected_customer = customers_df.loc[customers_df["id"] == cid, "name"].values[0] if not customers_df.empty else None
+        
+        # Auto-select salesperson based on customer's history
+        default_salesperson_index = 0
+        if selected_customer and selected_customer != st.session_state.last_selected_customer:
+            last_salesperson = get_last_salesperson_for_customer(selected_customer)
+            if last_salesperson in SALESPERSONS:
+                default_salesperson_index = SALESPERSONS.index(last_salesperson)
+            st.session_state.last_selected_customer = selected_customer
+            # Force rerun to update salesperson dropdown
+            st.rerun()
+        elif selected_customer and selected_customer == st.session_state.last_selected_customer:
+            # Maintain the auto-selected salesperson
+            last_salesperson = get_last_salesperson_for_customer(selected_customer)
+            if last_salesperson in SALESPERSONS:
+                default_salesperson_index = SALESPERSONS.index(last_salesperson)
+        
+        with col2:
+            salesperson = st.selectbox("Salesperson", SALESPERSONS, index=default_salesperson_index, key=f'add_salesperson_{st.session_state.add_sales_key}')
+        
+        plats = platform_inputs(f"add_{st.session_state.add_sales_key}")
+
+        st.markdown("---")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            amount = st.number_input("Amount", min_value=0.0, step=1.0, format="%0.2f", key=f'add_amount_{st.session_state.add_sales_key}')
+        with c2:
+            bank = st.selectbox("Bank", BANKS, key=f'add_bank_{st.session_state.add_sales_key}')
+        with c3:
+            status = st.selectbox("Status", STATUS_OPTIONS, key=f'add_status_{st.session_state.add_sales_key}')
+
+        remark = st.text_area("Remark (optional)", key=f'add_remark_{st.session_state.add_sales_key}')
+
+        if st.button("Save Sale", type="primary"):
+            errors = []
+            if not dt: errors.append("Date is required")
+            if not salesperson: errors.append("Salesperson is required")
+            if cid == -1 and not cust_name: errors.append("New customer name is required")
             
-            cid, cust_name = customer_selector(f"add_funds_{st.session_state.add_funds_key}")
+            final_cid = cid
+            if cid == -1 and cust_name:
+                final_cid = ensure_customer(cust_name)
             
-            col1, col2 = st.columns(2)
-            with col1:
-                amount = st.number_input("Amount to Add", min_value=0.0, step=1.0, format="%0.2f", key=f'add_funds_amount_{st.session_state.add_funds_key}')
-            with col2:
-                bank = st.selectbox("Bank", BANKS, key=f'add_funds_bank_{st.session_state.add_funds_key}')
+            if final_cid == -1:
+                errors.append("Customer selection is required")
+            if not plats:
+                errors.append("At least one platform is required")
+            else:
+                for (_p_id, acc, _qty) in plats:
+                    if not acc: errors.append("Platform ID required for all selected platforms")
             
-            description = st.text_input("Description", value="Fund Addition", key=f'add_funds_desc_{st.session_state.add_funds_key}')
-            remark = st.text_area("Remark (optional)", key=f'add_funds_remark_{st.session_state.add_funds_key}')
-            
-            if st.button("Add Funds", type="primary"):
-                errors = []
-                if not dt: errors.append("Date is required")
-                if cid == -1 and not cust_name: errors.append("Customer name is required")
-                
-                final_cid = cid
-                if cid == -1 and cust_name:
-                    final_cid = ensure_customer(cust_name)
-                
-                if final_cid == -1: errors.append("Customer selection is required")
-                if amount is None or amount <= 0: errors.append("Amount must be positive")
-                if not description: errors.append("Description is required")
-                
-                if errors:
-                    st.error("\n".join(["❌ " + e for e in errors]))
-                else:
-                    add_prepaid_funds(final_cid, float(amount), dt.strftime("%Y-%m-%d"), 
-                                      description, salesperson, bank, remark)
-                    st.success(f"✅ Added ₹{amount:.2f} to {cust_name if cust_name else 'customer'} account")
-                    
+            total_quantity = sum(p[2] for p in plats)
+            if total_quantity < 1: errors.append("Total quantity must be at least 1")
+
+            if amount is None or amount <= 0: errors.append("Amount must be positive")
+            if not status: errors.append("Status is required")
+            if not bank: errors.append("Bank is required")
+
+            if errors:
+                st.error("\n".join(["❌ " + e for e in errors]))
+            else:
+                sequential_id = insert_sale(
+                    dt.strftime("%Y-%m-%d"), salesperson, final_cid, int(total_quantity),
+                    float(amount), status, bank, remark, plats
+                )
+                if sequential_id > 0:
+                    st.success(f"✅ Sale saved with ID #{sequential_id:02d}")
+                    st.session_state.last_selected_customer = None  # Reset for next entry
                     time.sleep(2)
-                    st.session_state.add_funds_key += 1
+                    st.session_state.add_sales_key += 1
                     st.rerun()
     
     # --- Deduct Funds ---
