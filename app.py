@@ -1802,41 +1802,49 @@ elif menu == "Platform ID List":
         st.info("No platform data found.")
         st.stop()
 
-   # Archive filter
-archive_filter = st.selectbox(
-    "Show",
-    ["All", "Unarchived", "Archived"],
-    key="archive_filter_main"
-)
+    # ----------------- FILTERS -----------------
+    platforms_df = get_platforms()
+    platform_names = platforms_df["name"].tolist()
 
-# Apply platform filter
-if selected_platform != "All":
-    filtered_df = df[df["platform"] == selected_platform].copy()
-else:
+    colf1, colf2 = st.columns(2)
+    with colf1:
+        selected_platform = st.selectbox(
+            "Filter by Platform", 
+            options=["All"] + platform_names,
+            key="platform_filter_main"
+        )
+    with colf2:
+        archive_filter = st.selectbox(
+            "Show",
+            ["All", "Unarchived", "Archived"],
+            key="archive_filter_main"
+        )
+
+    # Apply filters
     filtered_df = df.copy()
 
-# Apply archive filter
-if archive_filter == "Archived":
-    filtered_df = filtered_df[filtered_df["is_archived"] == True]
-elif archive_filter == "Unarchived":
-    filtered_df = filtered_df[filtered_df["is_archived"] == False]
-
-
-    # Apply filter
+    # Platform filter
     if selected_platform != "All":
-        filtered_df = df[df["platform"] == selected_platform].copy()
-    else:
-        filtered_df = df.copy()
+        filtered_df = filtered_df[filtered_df["platform"] == selected_platform]
+
+    # Archive filter
+    if archive_filter == "Archived":
+        filtered_df = filtered_df[filtered_df["is_archived"] == True]
+    elif archive_filter == "Unarchived":
+        filtered_df = filtered_df[filtered_df["is_archived"] == False]
 
     if filtered_df.empty:
-        st.info("No data found for the selected filter.")
+        st.info("No data found for the selected filters.")
         st.stop()
 
+    # ----------------- TABLE -----------------
     st.subheader("Platform ID List")
     st.write("Use checkboxes to mark items as archived/done:")
 
     # Create header
-    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([0.8, 1, 1.2, 1.5, 1.2, 1.8, 0.8, 1.2])
+    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(
+        [0.8, 1, 1.2, 1.5, 1.2, 1.8, 0.8, 1.2]
+    )
     with col1:
         st.write("**Archive**")
     with col2:
@@ -1858,7 +1866,9 @@ elif archive_filter == "Unarchived":
 
     # Display data rows
     for index, row in filtered_df.iterrows():
-        col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([0.8, 1, 1.2, 1.5, 1.2, 1.8, 0.8, 1.2])
+        col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(
+            [0.8, 1, 1.2, 1.5, 1.2, 1.8, 0.8, 1.2]
+        )
         
         platform_id = row['platform_id']
         current_archived = bool(row['is_archived'])
@@ -1887,13 +1897,11 @@ elif archive_filter == "Unarchived":
                     st.error(f"Error updating status: {str(e)}")
 
         with col2:
-            # FIXED: Safe formatting of sale ID using sequential ID with proper error handling
+            # Safe formatting of sale ID using sequential ID
             try:
                 sale_sequential_id = row['sale_sequential_id']
                 if pd.isna(sale_sequential_id) or sale_sequential_id is None:
-                    # Use platform_id as fallback
                     sale_sequential_id = platform_id
-                
                 sale_sequential_id = int(float(sale_sequential_id))
                 
                 if row['sale_type'] == 'Prepaid':
@@ -1901,7 +1909,6 @@ elif archive_filter == "Unarchived":
                 else:
                     st.write(f"#{sale_sequential_id:02d}")
             except (ValueError, TypeError, KeyError):
-                # Fallback display
                 st.write(f"#ERR{platform_id}")
 
         with col3:
@@ -1929,7 +1936,7 @@ elif archive_filter == "Unarchived":
             else:
                 st.write("⏳ Pending")
 
-    # Summary statistics
+    # ----------------- SUMMARY -----------------
     st.subheader("Summary")
     
     col1, col2, col3 = st.columns(3)
