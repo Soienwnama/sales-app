@@ -225,7 +225,6 @@ def init_db():
             # Update existing records with sequential IDs
             c.execute("SELECT id FROM prepaid_sales ORDER BY id")
             existing_prepaid_sales = c.fetchall()
-        
             for i, (sale_id,) in enumerate(existing_prepaid_sales, 1):
                 c.execute("UPDATE prepaid_sales SET sequential_id = %s WHERE id = %s", (i, sale_id))
         except psycopg2.Error:
@@ -240,7 +239,6 @@ def init_db():
                 pass
                 
         conn.commit()
-        
     except psycopg2.Error as e:
         st.error(f"Database initialization failed: {e}")
     finally:
@@ -1661,7 +1659,7 @@ elif menu == "Report":
                 ),
                 prepaid_platform_sales AS (
                     SELECT p.name AS platform,
-                           COALESCE(SUM(psp.quantity), 0) AS total_quantity,
+                    COALESCE(SUM(psp.quantity), 0) AS total_quantity,
                            COALESCE(SUM((ps.total_amount * psp.quantity) / NULLIF(ps.quantity, 0)), 0) AS total_amount
                     FROM platforms p
                     LEFT JOIN prepaid_sale_platforms psp ON p.id = psp.platform_id
@@ -1937,34 +1935,34 @@ elif menu == "Platform ID List":
                 st.write("⏳ Pending")
 
   # ----------------- SUMMARY (OVERALL, NOT FILTERED) -----------------
-st.subheader("Summary (All Data)")
+    st.subheader("Summary (All Data)")
 
-total_items_all = len(df)
-archived_items_all = len(df[df['is_archived'] == True])
-unarchived_items_all = total_items_all - archived_items_all
+    total_items_all = len(df)
+    archived_items_all = len(df[df['is_archived'] == True])
+    unarchived_items_all = total_items_all - archived_items_all
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("Total Items", total_items_all)
-with col2:
-    st.metric("Archived (Done)", archived_items_all)
-with col3:
-    st.metric("Unarchived (Pending)", unarchived_items_all)
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Items", total_items_all)
+    with col2:
+        st.metric("Archived (Done)", archived_items_all)
+    with col3:
+        st.metric("Unarchived (Pending)", unarchived_items_all)
 
-# (optional) summary for current filter view
-st.subheader("Current Filter View")
+    # (optional) summary for current filter view
+    st.subheader("Current Filter View")
 
-total_items_filtered = len(filtered_df)
-archived_items_filtered = len(filtered_df[filtered_df['is_archived'] == True])
-unarchived_items_filtered = total_items_filtered - archived_items_filtered
+    total_items_filtered = len(filtered_df)
+    archived_items_filtered = len(filtered_df[filtered_df['is_archived'] == True])
+    unarchived_items_filtered = total_items_filtered - archived_items_filtered
 
-colf1, colf2, colf3 = st.columns(3)
-with colf1:
-    st.metric("Filtered Items", total_items_filtered)
-with colf2:
-    st.metric("Filtered Archived", archived_items_filtered)
-with colf3:
-    st.metric("Filtered Unarchived", unarchived_items_filtered)
+    colf1, colf2, colf3 = st.columns(3)
+    with colf1:
+        st.metric("Filtered Items", total_items_filtered)
+    with colf2:
+        st.metric("Filtered Archived", archived_items_filtered)
+    with colf3:
+        st.metric("Filtered Unarchived", unarchived_items_filtered)
 
 
     # Platform breakdown if filtered
@@ -2090,7 +2088,7 @@ elif menu == "Prepaid Customer":
         
         if 'deduct_funds_key' not in st.session_state:
             st.session_state.deduct_funds_key = 0
-        
+
         container_key = f'deduct_funds_container_{st.session_state.deduct_funds_key}'
         with st.container(key=container_key):
             col1, col2 = st.columns(2)
@@ -2370,7 +2368,7 @@ elif menu == "Prepaid Customer":
                             st.success("✅ Done")
                         else:
                             st.write("⏳ Pending")
-                
+            
                 # Summary statistics
                 st.subheader("📊 Prepaid Platform Summary")
                 col1, col2, col3 = st.columns(3)
