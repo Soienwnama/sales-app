@@ -1015,29 +1015,26 @@ if menu == "Add Sales":
     if 'add_sales_key' not in st.session_state:
         st.session_state.add_sales_key = 0
     
-    if 'selected_customer_id' not in st.session_state:
-        st.session_state.selected_customer_id = None
-    
-    if 'auto_salesperson' not in st.session_state:
-        st.session_state.auto_salesperson = None
-    
     container_key = f'add_sales_container_{st.session_state.add_sales_key}'
     with st.container(key=container_key):
         col1, col2 = st.columns(2)
         with col1:
             dt = st.date_input("Date", value=date.today(), key=f'add_date_{st.session_state.add_sales_key}')
         
-        # Leave col2 empty for now, we'll add salesperson after customer selection
-        
         # Customer selection FIRST
         cid, cust_name, last_salesperson = customer_selector(f"add_{st.session_state.add_sales_key}", auto_select_salesperson=True)
         
-        # NOW add salesperson selection in a NEW row, after we know the last_salesperson
+        # DEBUG: Show what we got
+        st.info(f"DEBUG: cid={cid}, cust_name='{cust_name}', last_salesperson='{last_salesperson}'")
+        
+        # NOW add salesperson selection after we know the last_salesperson
         with col2:
             if last_salesperson and last_salesperson in SALESPERSONS:
                 default_sp_index = SALESPERSONS.index(last_salesperson)
+                st.info(f"DEBUG: Auto-selecting salesperson '{last_salesperson}' at index {default_sp_index}")
                 salesperson = st.selectbox("Salesperson", SALESPERSONS, index=default_sp_index, key=f'add_salesperson_{st.session_state.add_sales_key}')
             else:
+                st.info(f"DEBUG: No last salesperson found, using default")
                 salesperson = st.selectbox("Salesperson", SALESPERSONS, key=f'add_salesperson_{st.session_state.add_sales_key}')
         
         plats = platform_inputs(f"add_{st.session_state.add_sales_key}")
@@ -1089,9 +1086,8 @@ if menu == "Add Sales":
                     st.success(f"✅ Sale saved with ID #{sequential_id:02d}")
                     time.sleep(2)
                     st.session_state.add_sales_key += 1
-                    st.session_state.selected_customer_id = None
-                    st.session_state.auto_salesperson = None
                     st.rerun()
+                    
 # --- View Sales ---
 elif menu == "View Sales":
     st.subheader("📄 All Sales")
@@ -1220,6 +1216,9 @@ elif menu == "Edit Sales":
             st.error("Error selecting sale. Please try again.")
             st.stop()
         
+        # DEBUG: Show what customer name we're passing
+        st.info(f"DEBUG: Customer name from sale: '{row['customer']}'")
+        
         # Get platform data based on sale type
         if row["sale_type"] == "Prepaid":
             sp_df = get_prepaid_sale_platforms_df()
@@ -1236,7 +1235,17 @@ elif menu == "Edit Sales":
         with col2:
             salesperson = st.selectbox("Salesperson", SALESPERSONS, index=SALESPERSONS.index(row["salesperson"]))
 
+        # DEBUG: Show all customers
+        customers_df = get_customers()
+        st.info(f"DEBUG: All customers: {customers_df['name'].tolist()}")
+        st.info(f"DEBUG: Looking for customer: '{row['customer']}'")
+        st.info(f"DEBUG: Customer in list: {row['customer'] in customers_df['name'].tolist()}")
+
         cid, cust_name, _ = customer_selector("edit", default_customer=row['customer'], auto_select_salesperson=False)
+        
+        # DEBUG: Show what was returned
+        st.info(f"DEBUG: Returned cid={cid}, cust_name='{cust_name}'")
+        
         if cid == -1 and cust_name:
             cid = ensure_customer(cust_name)
         elif cid == -1:
