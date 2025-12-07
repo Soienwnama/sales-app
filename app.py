@@ -20,12 +20,13 @@ DB_CONFIG = {
 }
 
 SALESPERSONS = ["ABCD", "SHREEJI", "MUKESH", "VSTOCK", "SAHAJANAND GRAPHIC", "WHATSAPP"]
-BANKS = ["HDFC", "UNITY", "BOB"]
+BANKS = ["HDFC", "UNITY", "BOB", "PayPal"]
 DEFAULT_PLATFORMS = [
-    "Shutterstock", "123RF", "Adobe", "DepositPhoto", "DreamsTime", "Envato Elements",
+    "Shutterstock", "123RF", "Stock Adobe", "DepositPhoto", "DreamsTime", "Envato Elements",
     "FreePik", "IstockPhoto", "PngTree", "Motion Array", "Creative Fabrica", "Deezy",
     "Pikbest", "Designi", "Flaticon", "IconScout", "RawPixel", "UI8", "Vecteezy",
-    "Getty Images", "VectorStock", "Alamy", "Lovepik", "Adobestock Video", "Shutterstock Video"
+    "Getty Images", "VectorStock", "Alamy", "Lovepik", "Adobestock Video", "Shutterstock Video",
+    "Custom Design"
 ]
 STATUS_OPTIONS = ["Paid", "Pending"]
 PREPAID_TRANSACTION_TYPES = ["Credit", "Debit"]
