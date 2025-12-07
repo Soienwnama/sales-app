@@ -1936,21 +1936,36 @@ elif menu == "Platform ID List":
             else:
                 st.write("⏳ Pending")
 
-    # ----------------- SUMMARY -----------------
-    st.subheader("Summary")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    total_items = len(filtered_df)
-    archived_items = len(filtered_df[filtered_df['is_archived'] == True])
-    pending_items = total_items - archived_items
-    
-    with col1:
-        st.metric("Total Items", total_items)
-    with col2:
-        st.metric("Archived Items", archived_items)
-    with col3:
-        st.metric("Pending Items", pending_items)
+  # ----------------- SUMMARY (OVERALL, NOT FILTERED) -----------------
+st.subheader("Summary (All Data)")
+
+total_items_all = len(df)
+archived_items_all = len(df[df['is_archived'] == True])
+unarchived_items_all = total_items_all - archived_items_all
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("Total Items", total_items_all)
+with col2:
+    st.metric("Archived (Done)", archived_items_all)
+with col3:
+    st.metric("Unarchived (Pending)", unarchived_items_all)
+
+# (optional) summary for current filter view
+st.subheader("Current Filter View")
+
+total_items_filtered = len(filtered_df)
+archived_items_filtered = len(filtered_df[filtered_df['is_archived'] == True])
+unarchived_items_filtered = total_items_filtered - archived_items_filtered
+
+colf1, colf2, colf3 = st.columns(3)
+with colf1:
+    st.metric("Filtered Items", total_items_filtered)
+with colf2:
+    st.metric("Filtered Archived", archived_items_filtered)
+with colf3:
+    st.metric("Filtered Unarchived", unarchived_items_filtered)
+
 
     # Platform breakdown if filtered
     if selected_platform != "All":
