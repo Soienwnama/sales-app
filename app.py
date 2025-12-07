@@ -1027,10 +1027,12 @@ if menu == "Add Sales":
         with col1:
             dt = st.date_input("Date", value=date.today(), key=f'add_date_{st.session_state.add_sales_key}')
         
-        # Customer selection BEFORE salesperson
+        # Leave col2 empty for now, we'll add salesperson after customer selection
+        
+        # Customer selection FIRST
         cid, cust_name, last_salesperson = customer_selector(f"add_{st.session_state.add_sales_key}", auto_select_salesperson=True)
         
-        # Update salesperson selection based on customer
+        # NOW add salesperson selection in a NEW row, after we know the last_salesperson
         with col2:
             if last_salesperson and last_salesperson in SALESPERSONS:
                 default_sp_index = SALESPERSONS.index(last_salesperson)
