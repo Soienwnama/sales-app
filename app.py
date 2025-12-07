@@ -65,41 +65,6 @@ def get_conn():
         st.error(f"Database connection failed: {e}")
         st.stop()
 
-def get_last_salesperson_for_customer(customer_id: int) -> str:
-    """Get the last salesperson who sold to this customer"""
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        # Check regular sales first
-        c.execute("""
-            SELECT salesperson FROM sales 
-            WHERE customer_id = %s 
-            ORDER BY date DESC, sequential_id DESC 
-            LIMIT 1
-        """, (customer_id,))
-        result = c.fetchone()
-        
-        if result:
-            return result[0]
-        
-        # Check prepaid sales if no regular sales found
-        c.execute("""
-            SELECT salesperson FROM prepaid_sales 
-            WHERE customer_id = %s 
-            ORDER BY date DESC, sequential_id DESC 
-            LIMIT 1
-        """, (customer_id,))
-        result = c.fetchone()
-        
-        if result:
-            return result[0]
-        
-        return None
-    except Exception as e:
-        st.error(f"Error getting last salesperson: {e}")
-        return None
-    finally:
-        conn.close()
 def get_next_sequential_id(table_name: str, id_column: str = 'sequential_id') -> int:
     """Get the next sequential ID for a table"""
     conn = get_conn()
@@ -502,6 +467,40 @@ def get_all_activity() -> pd.DataFrame:
     except Exception as e:
         st.error(f"Error fetching activity: {e}")
         return pd.DataFrame()
+    finally:
+        conn.close()
+def get_last_salesperson_for_customer(customer_id: int) -> str | None:
+    """
+    Return the last salesperson who sold to this customer
+    (looks at both regular and prepaid sales).
+    """
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        c.execute(
+            """
+            SELECT salesperson, date, seq
+            FROM (
+                SELECT salesperson, date, sequential_id AS seq
+                FROM sales
+                WHERE customer_id = %s
+
+                UNION ALL
+
+                SELECT salesperson, date, sequential_id AS seq
+                FROM prepaid_sales
+                WHERE customer_id = %s
+            ) AS combined
+            ORDER BY date DESC, seq DESC
+            LIMIT 1
+            """,
+            (customer_id, customer_id),
+        )
+        res = c.fetchone()
+        return res[0] if res else None
+    except Exception as e:
+        st.error(f"Error getting last salesperson: {e}")
+        return None
     finally:
         conn.close()
 
@@ -917,10 +916,7 @@ menu = st.sidebar.selectbox(
 )
 
 # --- Utility UI pieces ---
-def customer_selector(key_suffix: str = "", default_customer: str = None, auto_select_salesperson: bool = False) -> Tuple[int, str, str]:
-    """
-    Returns: (customer_id, customer_name, last_salesperson)
-    """
+def customer_selector(key_suffix: str = "", default_customer: str = None) -> Tuple[int, str]:
     customers_df = get_customers()
     customer_names = customers_df["name"].tolist()
     
@@ -928,6 +924,11 @@ def customer_selector(key_suffix: str = "", default_customer: str = None, auto_s
     default_index = 0
     if default_customer and default_customer in customer_names:
         default_index = customer_names.index(default_customer)
+    elif default_customer is None:
+        default_index = 0
+    else:
+        options = [default_customer] + customer_names + [ADD_NEW_CUSTOMER]
+        default_index = 0
         
     selection = st.selectbox(
         "Customer Name / Contact",
@@ -935,19 +936,12 @@ def customer_selector(key_suffix: str = "", default_customer: str = None, auto_s
         index=default_index,
         key=f"cust_sel_{key_suffix}",
     )
-    
-    last_salesperson = None
     if selection == ADD_NEW_CUSTOMER:
         new_name = st.text_input("Enter New Customer / Contact", key=f"new_cust_{key_suffix}")
-        return (-1, new_name, None)
+        return (-1, new_name)
     else:
         cid = int(customers_df.loc[customers_df["name"] == selection, "id"].values[0])
-        
-        # Get last salesperson for this customer if auto_select is enabled
-        if auto_select_salesperson:
-            last_salesperson = get_last_salesperson_for_customer(cid)
-        
-        return (cid, selection, last_salesperson)
+        return (cid, selection)
 
 def platform_inputs(key_suffix: str = "", default_data: pd.DataFrame = None) -> List[Tuple[int, str, int]]:
     """Return list of tuples: (platform_id, platform_account_id, quantity)"""
@@ -1015,39 +1009,40 @@ if menu == "Add Sales":
     if 'add_sales_key' not in st.session_state:
         st.session_state.add_sales_key = 0
     
-    # Initialize selected customer tracking
-    if 'current_customer_id' not in st.session_state:
-        st.session_state.current_customer_id = None
-    
     container_key = f'add_sales_container_{st.session_state.add_sales_key}'
     with st.container(key=container_key):
-        # Date first
-        dt = st.date_input("Date", value=date.today(), key=f'add_date_{st.session_state.add_sales_key}')
-        
-        # Customer selection
-        cid, cust_name, last_salesperson = customer_selector(f"add_{st.session_state.add_sales_key}", auto_select_salesperson=True)
-        
-        # Track if customer changed
-        if st.session_state.current_customer_id != cid:
-            st.session_state.current_customer_id = cid
-            # Force rerun to update salesperson dropdown
-            if cid != -1 and last_salesperson:
-                st.rerun()
-        
-        # Salesperson selection with proper default
-        if last_salesperson and last_salesperson in SALESPERSONS:
-            default_sp_index = SALESPERSONS.index(last_salesperson)
-        else:
-            default_sp_index = 0
-            
-        salesperson = st.selectbox(
-            "Salesperson", 
-            SALESPERSONS, 
-            index=default_sp_index, 
-            key=f'add_salesperson_{st.session_state.add_sales_key}'
+        # 1) Date first
+        dt = st.date_input(
+            "Date",
+            value=date.today(),
+            key=f'add_date_{st.session_state.add_sales_key}'
         )
-        
+
+        # 2) Customer selection
+        cid, cust_name = customer_selector(f"add_{st.session_state.add_sales_key}")
+
+        # 3) Decide default salesperson based on last sale
+        if cid != -1:  # existing customer selected
+            last_sp = get_last_salesperson_for_customer(cid)
+        else:
+            last_sp = None
+
+        if last_sp and last_sp in SALESPERSONS:
+            default_sp_index = SALESPERSONS.index(last_sp)
+        else:
+            default_sp_index = 0  # fallback
+
+        # Use customer ID in key so it resets when you change customer
+        salesperson = st.selectbox(
+            "Salesperson",
+            SALESPERSONS,
+            index=default_sp_index,
+            key=f'add_salesperson_{st.session_state.add_sales_key}_{cid}'
+        )
+
+        # Platforms after salesperson
         plats = platform_inputs(f"add_{st.session_state.add_sales_key}")
+
 
         st.markdown("---")
         c1, c2, c3 = st.columns(3)
@@ -1096,9 +1091,8 @@ if menu == "Add Sales":
                     st.success(f"✅ Sale saved with ID #{sequential_id:02d}")
                     time.sleep(2)
                     st.session_state.add_sales_key += 1
-                    st.session_state.current_customer_id = None
                     st.rerun()
-                    
+
 # --- View Sales ---
 elif menu == "View Sales":
     st.subheader("📄 All Sales")
@@ -1243,37 +1237,22 @@ elif menu == "Edit Sales":
         with col2:
             salesperson = st.selectbox("Salesperson", SALESPERSONS, index=SALESPERSONS.index(row["salesperson"]))
 
-        # FIXED: Get customer info and handle properly
-        customers_df = get_customers()
-        customer_names = customers_df["name"].tolist()
-        
-        # Ensure the row customer exists in the list
-        if row['customer'] in customer_names:
-            default_customer_index = customer_names.index(row['customer'])
-        else:
-            st.error(f"Customer '{row['customer']}' not found in database!")
-            default_customer_index = 0
-        
-        # Display customer selector with correct default
-        selected_customer = st.selectbox(
-            "Customer Name / Contact",
-            options=customer_names + [ADD_NEW_CUSTOMER],
-            index=default_customer_index,
-            key=f"edit_customer_selector"
-        )
-        
-        if selected_customer == ADD_NEW_CUSTOMER:
-            new_name = st.text_input("Enter New Customer / Contact", key=f"edit_new_customer")
-            cid = -1
-            cust_name = new_name
-        else:
-            cid = int(customers_df.loc[customers_df["name"] == selected_customer, "id"].values[0])
-            cust_name = selected_customer
-        
-        if cid == -1 and cust_name:
-            cid = ensure_customer(cust_name)
-        elif cid == -1:
-            cid = int(customers_df.loc[customers_df["name"] == row['customer'], "id"].values[0])
+        # Use a unique key suffix per sale so Streamlit doesn't reuse the previous customer
+if pd.isna(row["sequential_id"]):
+    sale_key_id = int(row["id"])
+else:
+    sale_key_id = int(row["sequential_id"])
+
+cust_key_suffix = f"edit_{row['sale_type']}_{sale_key_id}"
+
+cid, cust_name = customer_selector(cust_key_suffix, default_customer=row['customer'])
+
+if cid == -1 and cust_name:
+    cid = ensure_customer(cust_name)
+elif cid == -1:
+    customers_df = get_customers()
+    cid = int(customers_df.loc[customers_df["name"] == row['customer'], "id"].values[0])
+
 
         plats = platform_inputs("edit", default_data=my_plats)
         
@@ -2034,7 +2013,7 @@ elif menu == "Prepaid Customer":
             with col2:
                 salesperson = st.selectbox("Received By", SALESPERSONS, key=f'add_funds_salesperson_{st.session_state.add_funds_key}')
             
-            cid, cust_name, _ = customer_selector(f"add_funds_{st.session_state.add_funds_key}", auto_select_salesperson=False)
+            cid, cust_name = customer_selector(f"add_funds_{st.session_state.add_funds_key}")
             
             col1, col2 = st.columns(2)
             with col1:
@@ -2084,7 +2063,7 @@ elif menu == "Prepaid Customer":
             with col2:
                 salesperson = st.selectbox("Salesperson", SALESPERSONS, key=f'deduct_funds_salesperson_{st.session_state.deduct_funds_key}')
             
-            cid, cust_name, _ = customer_selector(f"deduct_funds_{st.session_state.deduct_funds_key}", auto_select_salesperson=False)
+            cid, cust_name = customer_selector(f"deduct_funds_{st.session_state.deduct_funds_key}")
             
             # Show current balance
             if cid != -1:
