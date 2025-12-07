@@ -1802,14 +1802,25 @@ elif menu == "Platform ID List":
         st.info("No platform data found.")
         st.stop()
 
-    # Platform filter
-    platforms_df = get_platforms()
-    platform_names = platforms_df["name"].tolist()
-    selected_platform = st.selectbox(
-        "Filter by Platform", 
-        options=["All"] + platform_names,
-        key="platform_filter_main"
-    )
+   # Archive filter
+archive_filter = st.selectbox(
+    "Show",
+    ["All", "Unarchived", "Archived"],
+    key="archive_filter_main"
+)
+
+# Apply platform filter
+if selected_platform != "All":
+    filtered_df = df[df["platform"] == selected_platform].copy()
+else:
+    filtered_df = df.copy()
+
+# Apply archive filter
+if archive_filter == "Archived":
+    filtered_df = filtered_df[filtered_df["is_archived"] == True]
+elif archive_filter == "Unarchived":
+    filtered_df = filtered_df[filtered_df["is_archived"] == False]
+
 
     # Apply filter
     if selected_platform != "All":
