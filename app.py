@@ -42,6 +42,7 @@ def get_conn():
         cert_path = os.path.join(os.path.dirname(__file__), 'root.crt')
         
         database_url = os.getenv('DATABASE_URL')
+       
         if database_url:
             # Add certificate path to connection string
             if '?' in database_url:
@@ -223,6 +224,7 @@ def init_db():
             # Update existing records with sequential IDs
             c.execute("SELECT id FROM prepaid_sales ORDER BY id")
             existing_prepaid_sales = c.fetchall()
+        
             for i, (sale_id,) in enumerate(existing_prepaid_sales, 1):
                 c.execute("UPDATE prepaid_sales SET sequential_id = %s WHERE id = %s", (i, sale_id))
         except psycopg2.Error:
@@ -469,6 +471,7 @@ def get_all_activity() -> pd.DataFrame:
         return pd.DataFrame()
     finally:
         conn.close()
+
 def get_last_salesperson_for_customer(customer_id: int) -> str | None:
     """
     Return the last salesperson who sold to this customer
@@ -557,7 +560,7 @@ def ensure_platform(name: str) -> int:
         conn.close()
 
 def insert_sale(date_str: str, salesperson: str, customer_id: int, total_quantity: int, amount: float,
-                 status: str, bank: str, remark: str, platform_map: List[Tuple[int, str, int]]) -> int:
+                status: str, bank: str, remark: str, platform_map: List[Tuple[int, str, int]]) -> int:
     conn = get_conn()
     c = conn.cursor()
     try:
@@ -696,7 +699,7 @@ def ensure_prepaid_balance(customer_id: int):
         conn.close()
 
 def add_prepaid_funds(customer_id: int, amount: float, date_str: str, description: str, 
-                     salesperson: str = None, bank: str = None, remark: str = None):
+                      salesperson: str = None, bank: str = None, remark: str = None):
     conn = get_conn()
     c = conn.cursor()
     try:
@@ -1238,21 +1241,20 @@ elif menu == "Edit Sales":
             salesperson = st.selectbox("Salesperson", SALESPERSONS, index=SALESPERSONS.index(row["salesperson"]))
 
         # Use a unique key suffix per sale so Streamlit doesn't reuse the previous customer
-if pd.isna(row["sequential_id"]):
-    sale_key_id = int(row["id"])
-else:
-    sale_key_id = int(row["sequential_id"])
+        if pd.isna(row["sequential_id"]):
+            sale_key_id = int(row["id"])
+        else:
+            sale_key_id = int(row["sequential_id"])
 
-cust_key_suffix = f"edit_{row['sale_type']}_{sale_key_id}"
+        cust_key_suffix = f"edit_{row['sale_type']}_{sale_key_id}"
 
-cid, cust_name = customer_selector(cust_key_suffix, default_customer=row['customer'])
+        cid, cust_name = customer_selector(cust_key_suffix, default_customer=row['customer'])
 
-if cid == -1 and cust_name:
-    cid = ensure_customer(cust_name)
-elif cid == -1:
-    customers_df = get_customers()
-    cid = int(customers_df.loc[customers_df["name"] == row['customer'], "id"].values[0])
-
+        if cid == -1 and cust_name:
+            cid = ensure_customer(cust_name)
+        elif cid == -1:
+            customers_df = get_customers()
+            cid = int(customers_df.loc[customers_df["name"] == row['customer'], "id"].values[0])
 
         plats = platform_inputs("edit", default_data=my_plats)
         
@@ -1325,7 +1327,7 @@ elif cid == -1:
                     st.success("✅ Sale updated.")
                     time.sleep(1)
                     st.rerun()
-                    
+                
 # --- Delete Sales ---
 elif menu == "Delete Sales":
     st.subheader("🗑️ Delete Sales")
@@ -1379,7 +1381,7 @@ elif menu == "Delete Sales":
             else:
                 row = matching_rows.iloc[0]
                 actual_sequential_id = selected_sequential_id
-                
+            
         except (ValueError, IndexError):
             st.error("Error selecting sale. Please try again.")
             st.stop()
@@ -1676,7 +1678,7 @@ elif menu == "Report":
                 """,
                 conn,
                 params=(start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"), 
-                       start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+                        start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
             )
         except Exception as e:
             st.warning(f"Could not load platform sales data: {e}")
@@ -1865,7 +1867,7 @@ elif menu == "Platform ID List":
                         archive_prepaid_platform_id(platform_id, archived)
                     else:
                         archive_platform_id(platform_id, archived)
-                    
+
                     status_text = "Done" if archived else "Pending"
                     st.toast(f"✅ {row['platform_account_id']} → {status_text}")
                     st.rerun()
@@ -1965,7 +1967,7 @@ elif menu == "Platform ID List":
             lambda row: f"#P{row['sale_sequential_id']:02d}" if row['sale_type'] == 'Prepaid' else f"#{row['sale_sequential_id']:02d}",
             axis=1
         )
-        
+
         # Select and rename columns for export
         export_columns = {
             'Sale_ID': 'Sale ID',
@@ -2152,8 +2154,7 @@ elif menu == "Prepaid Customer":
             # 1. Customers with non-zero balances, OR
             # 2. Customers who have had prepaid transactions (even if balance is now zero)
             prepaid_customers_df = balances_df[
-                (balances_df['balance'] != 0) | 
-                (balances_df['customer'].isin(customers_with_transactions))
+                (balances_df['balance'] != 0) | (balances_df['customer'].isin(customers_with_transactions))
             ]
             
             if not prepaid_customers_df.empty:
@@ -2182,7 +2183,7 @@ elif menu == "Prepaid Customer":
                     st.metric("💚 Positive Balance", f"₹{positive_balance:.2f}")
                 with col3:
                     st.metric("❤️ Negative Balance", f"₹{negative_balance:.2f}")
-                    
+            
                 # Show count of prepaid customers
                 st.info(f"Showing {len(prepaid_customers_df)} customers with prepaid activity")
             else:
@@ -2251,7 +2252,8 @@ elif menu == "Prepaid Customer":
                 st.info("No prepaid transactions found.")
         else:
             st.info("No customers found.")
-                
+            
+    
     # --- Prepaid Platform ID List ---
     elif prepaid_submenu == "Prepaid Platform ID List":
         st.subheader("🧾 Prepaid Platform ID Management")
@@ -2266,7 +2268,7 @@ elif menu == "Prepaid Customer":
             full_df = full_df.sort_values(by="date", ascending=False).reset_index(drop=True)
             full_df.rename(columns={'quantity_x': 'Quantity', 'id_x': 'prepaid_sale_platform_id'}, inplace=True)
             full_df = full_df[['prepaid_sale_platform_id', 'sequential_id', 'date', 'customer',
-                                'platform', 'platform_account_id', 'Quantity', 'is_archived']]
+                               'platform', 'platform_account_id', 'Quantity', 'is_archived']]
             
             platforms_df = get_platforms()
             platform_names = platforms_df["name"].tolist()
@@ -2316,7 +2318,7 @@ elif menu == "Prepaid Customer":
                             status_text = "Done" if archived else "Pending"
                             st.toast(f"✅ {row['platform_account_id']} → {status_text}")
                             st.rerun()
-                    
+            
                     with col2:
                         st.write(f"#P{row['sequential_id']:02d}")
                     with col3:
