@@ -1017,6 +1017,7 @@ if menu == "Add Sales":
         dt = st.date_input(
             "Date",
             value=date.today(),
+            max_value=date.today(),
             key=f'add_date_{st.session_state.add_sales_key}'
         )
 
@@ -1235,7 +1236,7 @@ elif menu == "Edit Sales":
 
         col1, col2 = st.columns(2)
         with col1:
-            dt = st.date_input("Date", value=datetime.strptime(row["date"], "%Y-%m-%d").date())
+            dt = st.date_input("Date", value=datetime.strptime(row["date"], "%Y-%m-%d").date(), max_value=date.today())
         with col2:
             salesperson = st.selectbox("Salesperson", SALESPERSONS, index=SALESPERSONS.index(row["salesperson"]))
 
@@ -1708,7 +1709,66 @@ elif menu == "Report":
             st.dataframe(platform_sales_df, use_container_width=True)
         else:
             st.info("No platform sales data found for the selected date range.")
-
+st.markdown("---")
+    st.subheader("📅 Inactive Customers Report")
+    st.write("Customers who haven't purchased in the last 45 days (1 month 15 days)")
+    
+    # Calculate date threshold (45 days ago)
+    threshold_date = (date.today() - timedelta(days=45)).strftime("%Y-%m-%d")
+    
+    conn = get_conn()
+    try:
+        inactive_customers_df = pd.read_sql_query(
+            """
+            WITH latest_sales AS (
+                SELECT customer_id, MAX(date) as last_sale_date
+                FROM (
+                    SELECT customer_id, date FROM sales
+                    UNION ALL
+                    SELECT customer_id, date FROM prepaid_sales
+                ) combined_sales
+                GROUP BY customer_id
+            )
+            SELECT 
+                c.name AS customer,
+                ls.last_sale_date,
+                CURRENT_DATE - ls.last_sale_date::date AS days_since_last_sale
+            FROM customers c
+            LEFT JOIN latest_sales ls ON c.id = ls.customer_id
+            WHERE ls.last_sale_date < %s OR ls.last_sale_date IS NULL
+            ORDER BY ls.last_sale_date ASC NULLS FIRST
+            """,
+            conn,
+            params=(threshold_date,)
+        )
+        
+        if not inactive_customers_df.empty:
+            # Format the dataframe
+            inactive_customers_df['last_sale_date'] = inactive_customers_df['last_sale_date'].fillna('Never')
+            inactive_customers_df['days_since_last_sale'] = inactive_customers_df['days_since_last_sale'].fillna('N/A')
+            
+            # Display the dataframe
+            st.dataframe(inactive_customers_df, use_container_width=True)
+            
+            # Show count
+            st.metric("Inactive Customers", len(inactive_customers_df))
+            
+            # Export functionality
+            if st.button("Export Inactive Customers"):
+                csv = inactive_customers_df.to_csv(index=False)
+                st.download_button(
+                    label="Download CSV",
+                    data=csv,
+                    file_name=f"inactive_customers_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv"
+                )
+        else:
+            st.success("✅ All customers are active! No customers inactive for more than 45 days.")
+    
+    except Exception as e:
+        st.error(f"Error fetching inactive customers: {e}")
+    finally:
+        conn.close()
 
 # --- Platform ID List ---
 elif menu == "Platform ID List":
@@ -2043,7 +2103,7 @@ elif menu == "Prepaid Customer":
         with st.container(key=container_key):
             col1, col2 = st.columns(2)
             with col1:
-                dt = st.date_input("Date", value=date.today(), key=f'add_funds_date_{st.session_state.add_funds_key}')
+                dt = st.date_input("Date", value=date.today(), max_value=date.today(), key=f'add_funds_date_{st.session_state.add_funds_key}')
             with col2:
                 salesperson = st.selectbox("Received By", SALESPERSONS, key=f'add_funds_salesperson_{st.session_state.add_funds_key}')
             
@@ -2093,7 +2153,7 @@ elif menu == "Prepaid Customer":
         with st.container(key=container_key):
             col1, col2 = st.columns(2)
             with col1:
-                dt = st.date_input("Date", value=date.today(), key=f'deduct_funds_date_{st.session_state.deduct_funds_key}')
+                dt = st.date_input("Date", value=date.today(), max_value=date.today(), key=f'deduct_funds_date_{st.session_state.deduct_funds_key}')
             with col2:
                 salesperson = st.selectbox("Salesperson", SALESPERSONS, key=f'deduct_funds_salesperson_{st.session_state.deduct_funds_key}')
             
