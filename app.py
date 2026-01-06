@@ -1712,7 +1712,20 @@ elif menu == "Report":
 
     st.markdown("---")
     st.subheader("📅 Inactive Customers Report")
-    st.write("Customers who haven't purchased in the last 45 days (1 month 15 days)")
+
+# Add user input for days
+inactive_days = st.number_input(
+    "Show customers inactive for more than (days):", 
+    min_value=1, 
+    max_value=365, 
+    value=45,  # default value
+    step=1
+)
+
+st.write(f"Customers who haven't purchased in the last {inactive_days} days")
+
+# Calculate date threshold based on user input
+threshold_date = (date.today() - timedelta(days=inactive_days)).strftime("%Y-%m-%d")
     
     # Calculate date threshold (45 days ago)
     threshold_date = (date.today() - timedelta(days=45)).strftime("%Y-%m-%d")
