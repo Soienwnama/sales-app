@@ -1709,6 +1709,7 @@ elif menu == "Report":
             st.dataframe(platform_sales_df, use_container_width=True)
         else:
             st.info("No platform sales data found for the selected date range.")
+
     st.markdown("---")
     st.subheader("📅 Inactive Customers Report")
     st.write("Customers who haven't purchased in the last 45 days (1 month 15 days)")
