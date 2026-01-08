@@ -1714,20 +1714,21 @@ elif menu == "Report":
     st.subheader("📅 Inactive Customers Report")
 
 # Add user input for days
-inactive_days = st.number_input(
-    "Show customers inactive for more than (days):", 
-    min_value=1, 
-    max_value=365, 
-    value=45,  # default value
-    step=1
-)
+    inactive_days = st.number_input(
+        "Show customers inactive for more than (days):", 
+        min_value=1, 
+        max_value=365, 
+        value=45,  # default value
+        step=1
+    )
 
-st.write(f"Customers who haven't purchased in the last {inactive_days} days")
+    st.write(f"Customers who haven't purchased in the last {inactive_days} days")
 
-# Calculate date threshold based on user input
+    # Calculate date threshold based on user input
+    # FIX: Remove the extra spaces at the start of the line below
     threshold_date = (date.today() - timedelta(days=inactive_days)).strftime("%Y-%m-%d")
     
-    # Database connection (Corrected Indentation)
+    # Database connection
     conn = get_conn()
     try:
         inactive_customers_df = pd.read_sql_query(
@@ -1781,92 +1782,6 @@ st.write(f"Customers who haven't purchased in the last {inactive_days} days")
         st.error(f"Error fetching inactive customers: {e}")
     finally:
         conn.close()
-
-# --- Platform ID List ---
-elif menu == "Platform ID List":
-    st.title("Platform ID Management")
-
-    # Get platform data with a simple, direct approach
-    conn = get_conn()
-    
-    # Query to get all platform entries with their associated sale and customer info
-    try:
-        query = """
-        SELECT 
-            sp.id as platform_id,
-            COALESCE(s.sequential_id, s.id) as sale_sequential_id,
-            sp.platform_account_id,
-            sp.quantity,
-            sp.is_archived,
-            s.date,
-            c.name as customer,
-            p.name as platform,
-            'Regular' as sale_type
-        FROM sale_platforms sp
-        JOIN sales s ON sp.sale_id = s.id
-        JOIN customers c ON s.customer_id = c.id
-        JOIN platforms p ON sp.platform_id = p.id
-        
-        UNION ALL
-        
-        SELECT 
-            psp.id as platform_id,
-            COALESCE(ps.sequential_id, ps.id) as sale_sequential_id,
-            psp.platform_account_id,
-            psp.quantity,
-            psp.is_archived,
-            ps.date,
-            c.name as customer,
-            p.name as platform,
-            'Prepaid' as sale_type
-        FROM prepaid_sale_platforms psp
-        JOIN prepaid_sales ps ON psp.prepaid_sale_id = ps.id
-        JOIN customers c ON ps.customer_id = c.id
-        JOIN platforms p ON psp.platform_id = p.id
-        
-        ORDER BY date DESC, sale_sequential_id DESC, platform_id DESC
-        """
-        
-        df = pd.read_sql_query(query, conn)
-        
-        # Additional safety: ensure no NULL values in critical columns
-        if not df.empty:
-            df['sale_sequential_id'] = df['sale_sequential_id'].fillna(df['platform_id'])
-            df['quantity'] = df['quantity'].fillna(1)
-            df['is_archived'] = df['is_archived'].fillna(False)
-            
-    except Exception as e:
-        st.warning(f"Could not load prepaid data: {e}")
-        # Fallback to regular sales only
-        try:
-            query = """
-            SELECT 
-                sp.id as platform_id,
-                COALESCE(s.sequential_id, s.id) as sale_sequential_id,
-                sp.platform_account_id,
-                sp.quantity,
-                sp.is_archived,
-                s.date,
-                c.name as customer,
-                p.name as platform,
-                'Regular' as sale_type
-            FROM sale_platforms sp
-            JOIN sales s ON sp.sale_id = s.id
-            JOIN customers c ON s.customer_id = c.id
-            JOIN platforms p ON sp.platform_id = p.id
-            ORDER BY s.date DESC, s.id DESC, sp.id DESC
-            """
-            df = pd.read_sql_query(query, conn)
-            
-            if not df.empty:
-                df['sale_sequential_id'] = df['sale_sequential_id'].fillna(df['platform_id'])
-                df['quantity'] = df['quantity'].fillna(1)
-                df['is_archived'] = df['is_archived'].fillna(False)
-        except Exception as e2:
-            st.error(f"Could not load platform data: {e2}")
-            df = pd.DataFrame()
-    
-    conn.close()
 
     if df.empty:
         st.info("No platform data found.")
