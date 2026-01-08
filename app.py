@@ -1725,11 +1725,9 @@ inactive_days = st.number_input(
 st.write(f"Customers who haven't purchased in the last {inactive_days} days")
 
 # Calculate date threshold based on user input
-threshold_date = (date.today() - timedelta(days=inactive_days)).strftime("%Y-%m-%d")
+    threshold_date = (date.today() - timedelta(days=inactive_days)).strftime("%Y-%m-%d")
     
-    # Calculate date threshold (45 days ago)
-    threshold_date = (date.today() - timedelta(days=45)).strftime("%Y-%m-%d")
-    
+    # Database connection (Corrected Indentation)
     conn = get_conn()
     try:
         inactive_customers_df = pd.read_sql_query(
@@ -1777,7 +1775,7 @@ threshold_date = (date.today() - timedelta(days=inactive_days)).strftime("%Y-%m-
                     mime="text/csv"
                 )
         else:
-            st.success("✅ All customers are active! No customers inactive for more than 45 days.")
+            st.success(f"✅ All customers are active! No customers inactive for more than {inactive_days} days.")
     
     except Exception as e:
         st.error(f"Error fetching inactive customers: {e}")
