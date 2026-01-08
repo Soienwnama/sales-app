@@ -1660,7 +1660,7 @@ elif menu == "Report":
                 ),
                 prepaid_platform_sales AS (
                     SELECT p.name AS platform,
-                    COALESCE(SUM(psp.quantity), 0) AS total_quantity,
+                           COALESCE(SUM(psp.quantity), 0) AS total_quantity,
                            COALESCE(SUM((ps.total_amount * psp.quantity) / NULLIF(ps.quantity, 0)), 0) AS total_amount
                     FROM platforms p
                     LEFT JOIN prepaid_sale_platforms psp ON p.id = psp.platform_id
@@ -1709,11 +1709,13 @@ elif menu == "Report":
             st.dataframe(platform_sales_df, use_container_width=True)
         else:
             st.info("No platform sales data found for the selected date range.")
+    else:
+        st.info("No data found for the selected date range.")
 
     st.markdown("---")
     st.subheader("📅 Inactive Customers Report")
 
-# Add user input for days
+    # Add user input for days
     inactive_days = st.number_input(
         "Show customers inactive for more than (days):", 
         min_value=1, 
@@ -1725,7 +1727,6 @@ elif menu == "Report":
     st.write(f"Customers who haven't purchased in the last {inactive_days} days")
 
     # Calculate date threshold based on user input
-    # FIX: Remove the extra spaces at the start of the line below
     threshold_date = (date.today() - timedelta(days=inactive_days)).strftime("%Y-%m-%d")
     
     # Database connection
@@ -1783,231 +1784,25 @@ elif menu == "Report":
     finally:
         conn.close()
 
-    if df.empty:
+
+# --- Platform ID List ---
+elif menu == "Platform ID List":
+    st.subheader("🆔 Platform ID List")
+    
+    # Load platform data HERE, at the start of this menu section
+    all_platforms_df = get_sale_platforms_df()
+    all_sales_df = get_sales()
+    
+    if all_platforms_df.empty or all_sales_df.empty:
         st.info("No platform data found.")
         st.stop()
+    
+    # Merge and prepare data
+    df = all_platforms_df.merge(all_sales_df, left_on="sale_id", right_on="id", how="left")
+    df = df.sort_values(by="date", ascending=False).reset_index(drop=True)
+    df.rename(columns={'quantity_x': 'quantity', 'id_x': 'platform_id', 'sequential_id': 'sale_sequential_id'}, inplace=True)
+    df = df[['platform_id', 'sale_id', 'sale_sequential_id', 'date', 'customer', 'platform', 'platform_account_id', 'quantity', 'is_archived', 'sale_type']]
 
-    # ----------------- FILTERS -----------------
-    platforms_df = get_platforms()
-    platform_names = platforms_df["name"].tolist()
-
-    colf1, colf2 = st.columns(2)
-    with colf1:
-        selected_platform = st.selectbox(
-            "Filter by Platform", 
-            options=["All"] + platform_names,
-            key="platform_filter_main"
-        )
-    with colf2:
-        archive_filter = st.selectbox(
-            "Show",
-            ["All", "Unarchived", "Archived"],
-            key="archive_filter_main"
-        )
-
-    # Apply filters
-    filtered_df = df.copy()
-
-    # Platform filter
-    if selected_platform != "All":
-        filtered_df = filtered_df[filtered_df["platform"] == selected_platform]
-
-    # Archive filter
-    if archive_filter == "Archived":
-        filtered_df = filtered_df[filtered_df["is_archived"] == True]
-    elif archive_filter == "Unarchived":
-        filtered_df = filtered_df[filtered_df["is_archived"] == False]
-
-    if filtered_df.empty:
-        st.info("No data found for the selected filters.")
-        st.stop()
-
-    # ----------------- TABLE -----------------
-    st.subheader("Platform ID List")
-    st.write("Use checkboxes to mark items as archived/done:")
-
-    # Create header
-    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(
-        [0.8, 1, 1.2, 1.5, 1.2, 1.8, 0.8, 1.2]
-    )
-    with col1:
-        st.write("**Archive**")
-    with col2:
-        st.write("**Sale ID**")
-    with col3:
-        st.write("**Date**")
-    with col4:
-        st.write("**Customer**")
-    with col5:
-        st.write("**Platform**")
-    with col6:
-        st.write("**Platform ID**")
-    with col7:
-        st.write("**Qty**")
-    with col8:
-        st.write("**Status**")
-
-    st.markdown("---")
-
-    # Display data rows
-    for index, row in filtered_df.iterrows():
-        col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(
-            [0.8, 1, 1.2, 1.5, 1.2, 1.8, 0.8, 1.2]
-        )
-        
-        platform_id = row['platform_id']
-        current_archived = bool(row['is_archived'])
-        
-        with col1:
-            archived = st.checkbox(
-                "", 
-                value=current_archived, 
-                key=f"archive_{platform_id}_{index}"
-            )
-            
-            # Update archive status if changed
-            if archived != current_archived:
-                sale_type = row['sale_type']
-                
-                try:
-                    if sale_type == 'Prepaid':
-                        archive_prepaid_platform_id(platform_id, archived)
-                    else:
-                        archive_platform_id(platform_id, archived)
-
-                    status_text = "Done" if archived else "Pending"
-                    st.toast(f"✅ {row['platform_account_id']} → {status_text}")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error updating status: {str(e)}")
-
-        with col2:
-            # Safe formatting of sale ID using sequential ID
-            try:
-                sale_sequential_id = row['sale_sequential_id']
-                if pd.isna(sale_sequential_id) or sale_sequential_id is None:
-                    sale_sequential_id = platform_id
-                sale_sequential_id = int(float(sale_sequential_id))
-                
-                if row['sale_type'] == 'Prepaid':
-                    st.write(f"#P{sale_sequential_id:02d}")
-                else:
-                    st.write(f"#{sale_sequential_id:02d}")
-            except (ValueError, TypeError, KeyError):
-                st.write(f"#ERR{platform_id}")
-
-        with col3:
-            st.write(row['date'])
-
-        with col4:
-            st.write(row['customer'])
-
-        with col5:
-            st.write(row['platform'])
-
-        with col6:
-            st.write(row['platform_account_id'])
-
-        with col7:
-            try:
-                quantity = int(float(row['quantity'])) if not pd.isna(row['quantity']) else 1
-                st.write(quantity)
-            except (ValueError, TypeError):
-                st.write("1")
-
-        with col8:
-            if archived:
-                st.success("✅ Done")
-            else:
-                st.write("⏳ Pending")
-
-  # ----------------- SUMMARY (OVERALL, NOT FILTERED) -----------------
-    st.subheader("Summary (All Data)")
-
-    total_items_all = len(df)
-    archived_items_all = len(df[df['is_archived'] == True])
-    unarchived_items_all = total_items_all - archived_items_all
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total Items", total_items_all)
-    with col2:
-        st.metric("Archived (Done)", archived_items_all)
-    with col3:
-        st.metric("Unarchived (Pending)", unarchived_items_all)
-
-    # (optional) summary for current filter view
-    st.subheader("Current Filter View")
-
-    total_items_filtered = len(filtered_df)
-    archived_items_filtered = len(filtered_df[filtered_df['is_archived'] == True])
-    unarchived_items_filtered = total_items_filtered - archived_items_filtered
-
-    colf1, colf2, colf3 = st.columns(3)
-    with colf1:
-        st.metric("Filtered Items", total_items_filtered)
-    with colf2:
-        st.metric("Filtered Archived", archived_items_filtered)
-    with colf3:
-        st.metric("Filtered Unarchived", unarchived_items_filtered)
-
-
-    # Platform breakdown if filtered
-    if selected_platform != "All":
-        st.subheader(f"{selected_platform} Statistics")
-        platform_data = filtered_df[filtered_df['platform'] == selected_platform]
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Platform Items", len(platform_data))
-        with col2:
-            archived_platform_items = len(platform_data[platform_data['is_archived'] == True])
-            st.metric("Archived", archived_platform_items)
-
-    # Sale type breakdown
-    if 'sale_type' in filtered_df.columns:
-        st.subheader("Sale Type Breakdown")
-        regular_count = len(filtered_df[filtered_df['sale_type'] == 'Regular'])
-        prepaid_count = len(filtered_df[filtered_df['sale_type'] == 'Prepaid'])
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Regular Sales", regular_count)
-        with col2:
-            st.metric("Prepaid Sales", prepaid_count)
-
-    # Export functionality
-    if st.button("Export Platform Data"):
-        export_df = filtered_df.copy()
-        
-        # Format for export
-        export_df['Status'] = export_df['is_archived'].apply(lambda x: "Done" if x else "Pending")
-        export_df['Sale_ID'] = export_df.apply(
-            lambda row: f"#P{row['sale_sequential_id']:02d}" if row['sale_type'] == 'Prepaid' else f"#{row['sale_sequential_id']:02d}",
-            axis=1
-        )
-
-        # Select and rename columns for export
-        export_columns = {
-            'Sale_ID': 'Sale ID',
-            'date': 'Date',
-            'customer': 'Customer', 
-            'platform': 'Platform',
-            'platform_account_id': 'Platform ID',
-            'quantity': 'Quantity',
-            'Status': 'Status',
-            'sale_type': 'Sale Type'
-        }
-        
-        export_df = export_df[list(export_columns.keys())].rename(columns=export_columns)
-        
-        csv = export_df.to_csv(index=False)
-        st.download_button(
-            label="Download Platform CSV",
-            data=csv,
-            file_name=f"platform_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
-        )
 
 
 # --- Prepaid Customer ---
