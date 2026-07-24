@@ -1,14 +1,42 @@
 import streamlit as st
 import psycopg2
 import pandas as pd
+import sqlite3
+import re
 from datetime import datetime, date, timedelta
 from typing import List, Tuple
 import time
 import os
 
+try:
+    from streamlit_option_menu import option_menu
+    HAS_OPTION_MENU = True
+except ImportError:
+    HAS_OPTION_MENU = False
+
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+    HAS_PLOTLY = True
+except ImportError:
+    HAS_PLOTLY = False
+
 # -----------------------------
 # CONFIG / CONSTANTS
 # -----------------------------
+# Set USE_LOCAL_SQLITE=true to run entirely on a local SQLite file with zero
+# setup - no CockroachDB / Docker / Postgres install needed. Great for
+# quickly testing the UI. Switch back to CockroachDB later by unsetting it
+# (or setting COCKROACH_INSECURE=true for local Cockroach, or DATABASE_URL
+# for CockroachDB Cloud).
+# Set USE_LOCAL_SQLITE=false only once you're ready to connect to a real
+# CockroachDB instance (Cloud or local). By default (no env var needed at
+# all) the app now runs on a local SQLite file with zero setup - this
+# avoids relying on an environment variable actually reaching the process,
+# which is an easy thing to get wrong on Windows.
+USE_SQLITE = os.getenv('USE_LOCAL_SQLITE', 'true').lower() in ('1', 'true', 'yes')
+SQLITE_PATH = os.getenv('SQLITE_PATH', 'sales_local.db')
+
 # CockroachDB connection parameters - set these via environment variables
 DB_CONFIG = {
     'host': os.getenv('COCKROACH_HOST', 'localhost'),
@@ -32,35 +60,243 @@ STATUS_OPTIONS = ["Paid", "Pending"]
 PREPAID_TRANSACTION_TYPES = ["Credit", "Debit"]
 ADD_NEW_CUSTOMER = "➕ Add New Customer"
 
-st.set_page_config(page_title="Sales Manager", layout="wide")
+
+# -----------------------------
+# SQLite compatibility shim
+# -----------------------------
+# Lets all the existing psycopg2-style SQL (using %s placeholders and
+# `id SERIAL PRIMARY KEY`) run unchanged against a local SQLite file.
+# Subclassing sqlite3.Connection/Cursor (rather than wrapping) keeps
+# isinstance(conn, sqlite3.Connection) true, which pandas.read_sql_query
+# relies on.
+_SERIAL_RE = re.compile(r'\bSERIAL\b', re.IGNORECASE)
+
+
+class _CompatCursor(sqlite3.Cursor):
+    def execute(self, sql, params=()):
+        sql = sql.replace('%s', '?')
+        sql = _SERIAL_RE.sub('INTEGER', sql)
+        return super().execute(sql, params)
+
+
+class _CompatConnection(sqlite3.Connection):
+    def cursor(self, *args, **kwargs):
+        return super().cursor(_CompatCursor)
+
+
+def _get_sqlite_conn():
+    conn = sqlite3.connect(
+        SQLITE_PATH, check_same_thread=False, isolation_level=None, factory=_CompatConnection
+    )
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+
+st.set_page_config(page_title="Sales Manager", page_icon="💼", layout="wide", initial_sidebar_state="expanded")
+
+# -----------------------------
+# GLOBAL STYLE (dark, card-based UI)
+# -----------------------------
+CUSTOM_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif;
+}
+
+/* App background with subtle gradient */
+[data-testid="stAppViewContainer"] {
+    background: radial-gradient(circle at 0% 0%, #1a1f2e 0%, #0E1117 45%);
+}
+
+/* Sidebar */
+[data-testid="stSidebar"] {
+    background: #12151d;
+    border-right: 1px solid rgba(255,255,255,0.06);
+}
+[data-testid="stSidebar"] .block-container {
+    padding-top: 1.2rem;
+}
+
+/* Page title */
+h1 {
+    font-weight: 800 !important;
+    letter-spacing: -0.5px;
+    background: linear-gradient(90deg, #A29BFE 0%, #6C5CE7 60%, #00CEC9 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    padding-bottom: 4px;
+}
+h2, h3 {
+    font-weight: 700 !important;
+    color: #EDEDED !important;
+}
+
+/* Metric cards */
+[data-testid="stMetric"] {
+    background: linear-gradient(145deg, #1b1f2b, #171a24);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 14px;
+    padding: 16px 18px 12px 18px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+[data-testid="stMetric"]:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(108,92,231,0.18);
+}
+[data-testid="stMetricLabel"] {
+    font-weight: 600 !important;
+    opacity: 0.75;
+}
+[data-testid="stMetricValue"] {
+    font-weight: 800 !important;
+}
+
+/* Buttons */
+.stButton > button, .stDownloadButton > button {
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    transition: all 0.15s ease;
+}
+.stButton > button[kind="primary"], .stDownloadButton > button {
+    background: linear-gradient(90deg, #6C5CE7, #8E7CFB) !important;
+    box-shadow: 0 4px 14px rgba(108,92,231,0.35);
+}
+.stButton > button[kind="primary"]:hover {
+    box-shadow: 0 6px 18px rgba(108,92,231,0.55);
+    transform: translateY(-1px);
+}
+
+/* Inputs, selects */
+.stTextInput input, .stNumberInput input, .stTextArea textarea,
+div[data-baseweb="select"] > div {
+    border-radius: 10px !important;
+    background-color: #171a24 !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+}
+
+/* Expanders as cards */
+.streamlit-expanderHeader {
+    background: #171a24;
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+}
+div[data-testid="stExpander"] {
+    border: 1px solid rgba(255,255,255,0.07) !important;
+    border-radius: 12px !important;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+/* Dataframes / tables */
+[data-testid="stDataFrame"] {
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.07);
+}
+
+/* Tabs */
+button[data-baseweb="tab"] {
+    font-weight: 600 !important;
+    border-radius: 8px 8px 0 0 !important;
+}
+
+/* Info/success/warning/error boxes */
+div[data-testid="stAlert"] {
+    border-radius: 12px !important;
+}
+
+/* Custom KPI card component (used on Dashboard) */
+.kpi-card {
+    background: linear-gradient(145deg, #1b1f2b, #171a24);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 16px;
+    padding: 18px 20px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+    height: 100%;
+}
+.kpi-card .kpi-icon { font-size: 26px; opacity: 0.9; }
+.kpi-card .kpi-label { font-size: 13px; font-weight: 600; opacity: 0.65; margin-top: 6px; }
+.kpi-card .kpi-value { font-size: 26px; font-weight: 800; margin-top: 2px; }
+.kpi-card .kpi-accent-purple { color: #A29BFE; }
+.kpi-card .kpi-accent-teal { color: #00CEC9; }
+.kpi-card .kpi-accent-pink { color: #FD79A8; }
+.kpi-card .kpi-accent-orange { color: #FDCB6E; }
+
+.section-divider {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, rgba(108,92,231,0.5), rgba(255,255,255,0.02));
+    margin: 18px 0 18px 0;
+}
+</style>
+"""
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+
+def kpi_card(col, icon: str, label: str, value: str, accent: str = "purple"):
+    with col:
+        st.markdown(
+            f"""
+            <div class="kpi-card">
+                <div class="kpi-icon">{icon}</div>
+                <div class="kpi-label">{label}</div>
+                <div class="kpi-value kpi-accent-{accent}">{value}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
 
 # -----------------------------
 # DB HELPERS
 # -----------------------------
 def get_conn():
+    if USE_SQLITE:
+        return _get_sqlite_conn()
+
+    insecure = os.getenv('COCKROACH_INSECURE', 'false').lower() in ('1', 'true', 'yes')
     try:
-        # Get the path to the certificate file
-        cert_path = os.path.join(os.path.dirname(__file__), 'root.crt')
-        
         database_url = os.getenv('DATABASE_URL')
-       
-        if database_url:
-            # Add certificate path to connection string
-            if '?' in database_url:
-                database_url += f'&sslrootcert={cert_path}'
+
+        if insecure:
+            # Local single-node CockroachDB started with --insecure: no SSL, no cert needed.
+            if database_url:
+                conn = psycopg2.connect(database_url)
             else:
-                database_url += f'?sslrootcert={cert_path}'
-            conn = psycopg2.connect(database_url)
+                conn = psycopg2.connect(
+                    host=DB_CONFIG['host'],
+                    port=DB_CONFIG['port'],
+                    database=DB_CONFIG['database'],
+                    user=DB_CONFIG['user'],
+                    password=DB_CONFIG['password'],
+                    sslmode='disable',
+                )
         else:
-            conn = psycopg2.connect(
-                host=DB_CONFIG['host'],
-                port=DB_CONFIG['port'],
-                database=DB_CONFIG['database'],
-                user=DB_CONFIG['user'],
-                password=DB_CONFIG['password'],
-                sslmode='verify-full',
-                sslrootcert=cert_path
-            )
+            # Get the path to the certificate file (needed for CockroachDB Cloud / secure clusters)
+            cert_path = os.path.join(os.path.dirname(__file__), 'root.crt')
+
+            if database_url:
+                # Add certificate path to connection string
+                if '?' in database_url:
+                    database_url += f'&sslrootcert={cert_path}'
+                else:
+                    database_url += f'?sslrootcert={cert_path}'
+                conn = psycopg2.connect(database_url)
+            else:
+                conn = psycopg2.connect(
+                    host=DB_CONFIG['host'],
+                    port=DB_CONFIG['port'],
+                    database=DB_CONFIG['database'],
+                    user=DB_CONFIG['user'],
+                    password=DB_CONFIG['password'],
+                    sslmode='verify-full',
+                    sslrootcert=cert_path
+                )
         conn.autocommit = True
         return conn
     except psycopg2.Error as e:
@@ -215,7 +451,7 @@ def init_db():
             existing_sales = c.fetchall()
             for i, (sale_id,) in enumerate(existing_sales, 1):
                 c.execute("UPDATE sales SET sequential_id = %s WHERE id = %s", (i, sale_id))
-        except psycopg2.Error:
+        except (psycopg2.Error, sqlite3.Error):
             # Column already exists or other error, continue
             pass
 
@@ -227,7 +463,7 @@ def init_db():
             existing_prepaid_sales = c.fetchall()
             for i, (sale_id,) in enumerate(existing_prepaid_sales, 1):
                 c.execute("UPDATE prepaid_sales SET sequential_id = %s WHERE id = %s", (i, sale_id))
-        except psycopg2.Error:
+        except (psycopg2.Error, sqlite3.Error):
             # Column already exists or other error, continue
             pass
 
@@ -239,7 +475,7 @@ def init_db():
                 pass
                 
         conn.commit()
-    except psycopg2.Error as e:
+    except (psycopg2.Error, sqlite3.Error) as e:
         st.error(f"Database initialization failed: {e}")
     finally:
         conn.close()
@@ -901,21 +1137,78 @@ if 'platform_id_data_df' not in st.session_state:
     st.session_state.data_has_changed = False
     st.session_state.edited_rows_to_process = {}
 
+MENU_ITEMS = [
+    "Dashboard",
+    "Add Sales",
+    "View Sales",
+    "Edit Sales",
+    "Delete Sales",
+    "Pending Payment",
+    "Customer History",
+    "Report",
+    "Platform ID List",
+    "Prepaid Customer",
+]
+MENU_ICONS = [
+    "speedometer2", "plus-circle", "table", "pencil-square", "trash3",
+    "hourglass-split", "person-lines-fill", "bar-chart-line", "key", "wallet2",
+]
+
+with st.sidebar:
+    st.markdown(
+        "<div style='padding:6px 4px 14px 4px;'>"
+        "<span style='font-size:26px;font-weight:800;'>💼 Sales</span>"
+        "<span style='font-size:26px;font-weight:800;color:#A29BFE;'> Manager</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    if HAS_OPTION_MENU:
+        menu = option_menu(
+            menu_title=None,
+            options=MENU_ITEMS,
+            icons=MENU_ICONS,
+            default_index=0,
+            styles={
+                "container": {"padding": "0", "background-color": "transparent"},
+                "icon": {"color": "#A29BFE", "font-size": "16px"},
+                "nav-link": {
+                    "font-size": "14px",
+                    "font-weight": "600",
+                    "text-align": "left",
+                    "margin": "3px 0",
+                    "border-radius": "10px",
+                    "padding": "10px 12px",
+                    "color": "#E6E6E6",
+                    "--hover-color": "#1b1f2b",
+                },
+                "nav-link-selected": {
+                    "background": "linear-gradient(90deg, #6C5CE7, #8E7CFB)",
+                    "color": "white",
+                },
+            },
+        )
+    else:
+        menu = st.radio("Menu", MENU_ITEMS, label_visibility="collapsed")
+
+    st.markdown("<div style='margin-top:14px;'></div>", unsafe_allow_html=True)
+    if USE_SQLITE:
+        st.markdown(
+            f"<div style='font-size:12px;padding:8px 10px;border-radius:8px;"
+            f"background:rgba(0,206,201,0.12);color:#00CEC9;border:1px solid rgba(0,206,201,0.3);'>"
+            f"🟢 DB: SQLite (local file)<br><code>{SQLITE_PATH}</code></div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        _insecure = os.getenv('COCKROACH_INSECURE', 'false').lower() in ('1', 'true', 'yes')
+        _target = os.getenv('DATABASE_URL', f"{DB_CONFIG['host']}:{DB_CONFIG['port']}")
+        st.markdown(
+            f"<div style='font-size:12px;padding:8px 10px;border-radius:8px;"
+            f"background:rgba(253,203,110,0.12);color:#FDCB6E;border:1px solid rgba(253,203,110,0.3);'>"
+            f"🟠 DB: CockroachDB ({'insecure' if _insecure else 'secure'})<br><code>{_target}</code></div>",
+            unsafe_allow_html=True,
+        )
+
 st.title("📋 Sales Record System")
-menu = st.sidebar.selectbox(
-    "Menu",
-    [
-        "Add Sales",
-        "View Sales",
-        "Edit Sales",
-        "Delete Sales",
-        "Pending Payment",
-        "Customer History",
-        "Report",
-        "Platform ID List",
-        "Prepaid Customer",
-    ],
-)
 
 # --- Utility UI pieces ---
 def customer_selector(key_suffix: str = "", default_customer: str = None) -> Tuple[int, str]:
@@ -1005,7 +1298,94 @@ def platform_inputs(key_suffix: str = "", default_data: pd.DataFrame = None) -> 
 
 
 # --- Add Sales ---
-if menu == "Add Sales":
+if menu == "Dashboard":
+    sales_df = get_sales()
+    customers_df = get_customers()
+    balances_df = get_prepaid_balances()
+    platforms_df = get_sale_platforms_df()
+
+    total_revenue = float(sales_df["amount"].sum()) if not sales_df.empty else 0.0
+    pending_amount = float(sales_df.loc[sales_df["status"] == "Pending", "amount"].sum()) if not sales_df.empty else 0.0
+    total_sales_count = len(sales_df)
+    total_customers = len(customers_df)
+    total_prepaid_balance = float(balances_df["balance"].sum()) if not balances_df.empty else 0.0
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    kpi_card(c1, "💰", "Total Revenue", f"₹{total_revenue:,.0f}", "purple")
+    kpi_card(c2, "⏳", "Pending Amount", f"₹{pending_amount:,.0f}", "orange")
+    kpi_card(c3, "🧾", "Total Sales", f"{total_sales_count}", "teal")
+    kpi_card(c4, "👥", "Customers", f"{total_customers}", "pink")
+    kpi_card(c5, "👛", "Prepaid Balance", f"₹{total_prepaid_balance:,.0f}", "teal")
+
+    st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
+
+    col_left, col_right = st.columns([1.4, 1])
+
+    with col_left:
+        st.subheader("📈 Revenue Trend")
+        if not sales_df.empty:
+            trend_df = sales_df.copy()
+            trend_df["date"] = pd.to_datetime(trend_df["date"])
+            daily = trend_df.groupby(trend_df["date"].dt.date)["amount"].sum().reset_index()
+            daily.columns = ["Date", "Amount"]
+            if HAS_PLOTLY:
+                fig = px.area(daily, x="Date", y="Amount", template="plotly_dark")
+                fig.update_traces(line_color="#6C5CE7", fillcolor="rgba(108,92,231,0.25)")
+                fig.update_layout(
+                    margin=dict(l=10, r=10, t=10, b=10),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    height=320,
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.line_chart(daily.set_index("Date"))
+        else:
+            st.info("No sales data yet - add a sale to see the trend.")
+
+    with col_right:
+        st.subheader("🏆 Top Platforms")
+        if not platforms_df.empty:
+            top_platforms = platforms_df.groupby("platform")["quantity"].sum().sort_values(ascending=False).head(8).reset_index()
+            top_platforms.columns = ["Platform", "Quantity"]
+            if HAS_PLOTLY:
+                fig2 = px.bar(top_platforms, x="Quantity", y="Platform", orientation="h", template="plotly_dark",
+                              color="Quantity", color_continuous_scale=["#00CEC9", "#6C5CE7"])
+                fig2.update_layout(
+                    margin=dict(l=10, r=10, t=10, b=10),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    height=320,
+                    coloraxis_showscale=False,
+                    yaxis=dict(autorange="reversed"),
+                )
+                st.plotly_chart(fig2, use_container_width=True)
+            else:
+                st.bar_chart(top_platforms.set_index("Platform"))
+        else:
+            st.info("No platform data yet.")
+
+    st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.subheader("👤 Top Customers")
+        if not sales_df.empty:
+            top_cust = sales_df.groupby("customer")["amount"].sum().sort_values(ascending=False).head(5).reset_index()
+            top_cust.columns = ["Customer", "Amount"]
+            st.dataframe(top_cust, use_container_width=True, hide_index=True)
+        else:
+            st.info("No customer sales yet.")
+    with col_b:
+        st.subheader("🕘 Recent Sales")
+        if not sales_df.empty:
+            recent = sales_df.head(5)[["date", "customer", "salesperson", "amount", "status"]]
+            recent.columns = ["Date", "Customer", "Salesperson", "Amount", "Status"]
+            st.dataframe(recent, use_container_width=True, hide_index=True)
+        else:
+            st.info("No recent sales yet.")
+
+elif menu == "Add Sales":
     st.subheader("➕ Add Sales")
 
     if 'add_sales_key' not in st.session_state:
@@ -1732,8 +2112,28 @@ elif menu == "Report":
     # Database connection
     conn = get_conn()
     try:
-        inactive_customers_df = pd.read_sql_query(
+        if USE_SQLITE:
+            inactive_query = """
+            WITH latest_sales AS (
+                SELECT customer_id, MAX(date) as last_sale_date
+                FROM (
+                    SELECT customer_id, date FROM sales
+                    UNION ALL
+                    SELECT customer_id, date FROM prepaid_sales
+                ) combined_sales
+                GROUP BY customer_id
+            )
+            SELECT
+                c.name AS customer,
+                ls.last_sale_date,
+                CAST(julianday('now') - julianday(ls.last_sale_date) AS INTEGER) AS days_since_last_sale
+            FROM customers c
+            LEFT JOIN latest_sales ls ON c.id = ls.customer_id
+            WHERE ls.last_sale_date < %s OR ls.last_sale_date IS NULL
+            ORDER BY (ls.last_sale_date IS NULL) DESC, ls.last_sale_date ASC
             """
+        else:
+            inactive_query = """
             WITH latest_sales AS (
                 SELECT customer_id, MAX(date) as last_sale_date
                 FROM (
@@ -1751,7 +2151,9 @@ elif menu == "Report":
             LEFT JOIN latest_sales ls ON c.id = ls.customer_id
             WHERE ls.last_sale_date < %s OR ls.last_sale_date IS NULL
             ORDER BY ls.last_sale_date ASC NULLS FIRST
-            """,
+            """
+        inactive_customers_df = pd.read_sql_query(
+            inactive_query,
             conn,
             params=(threshold_date,)
         )
